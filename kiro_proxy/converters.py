@@ -19,8 +19,10 @@ MAX_TOOLS = 50
 MAX_TOOL_DESCRIPTION_LENGTH = 500
 
 
-def generate_session_id(messages: list) -> str:
-    """基于消息内容生成会话ID"""
+def generate_session_id(messages: list | None = None) -> str:
+    """基于消息内容生成会话ID（支持空参）"""
+    if not messages:
+        return hashlib.sha256("".encode()).hexdigest()[:16]
     content = json.dumps(messages[:3], sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 

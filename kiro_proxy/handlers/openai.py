@@ -14,8 +14,8 @@ from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
-from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, is_quota_exceeded_error
-from ..converters import generate_session_id, convert_openai_messages_to_kiro, extract_images_from_content
+from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, parse_event_stream_full, is_quota_exceeded_error
+from ..converters import generate_session_id, convert_openai_messages_to_kiro, extract_images_from_content, convert_kiro_response_to_openai
 
 
 async def handle_chat_completions(request: Request):
@@ -33,7 +33,7 @@ async def handle_chat_completions(request: Request):
     if not messages:
         raise HTTPException(400, "messages required")
     
-    session_id = generate_session_id(messages)
+    session_id = generate_session_id(messages) if callable(generate_session_id) else uuid.uuid4().hex[:16]
     account = state.get_available_account(session_id)
     
     if not account:
