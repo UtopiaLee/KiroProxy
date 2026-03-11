@@ -18,6 +18,22 @@ from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, pa
 from ..converters import generate_session_id, convert_openai_messages_to_kiro, extract_images_from_content, convert_kiro_response_to_openai
 
 
+def _to_openai_tool_calls(tool_uses: list) -> list:
+    """将 Kiro tool_uses 转为 OpenAI tool_calls"""
+    tool_calls = []
+    for tool_use in tool_uses or []:
+        if tool_use.get("type") == "tool_use":
+            tool_calls.append({
+                "id": tool_use.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": tool_use.get("name", ""),
+                    "arguments": json.dumps(tool_use.get("input", {}))
+                }
+            })
+    return tool_calls
+
+
 async def handle_chat_completions(request: Request):
     """处理 /v1/chat/completions 请求"""
     start_time = time.time()
@@ -116,6 +132,8 @@ async def handle_chat_completions(request: Request):
     error_msg = None
     status_code = 200
     content = ""
+    tool_uses = []
+    result = None
     current_account = account
     max_retries = 2
     
@@ -206,7 +224,9 @@ async def handle_chat_completions(request: Request):
                     
                     raise HTTPException(resp.status_code, error.user_message)
                 
-                content = parse_event_stream(resp.content)
+                result = parse_event_stream_full(resp.content)
+                content = "".join(result.get("content", []))
+                tool_uses = result.get("tool_uses", [])
                 current_account.request_count += 1
                 current_account.last_used = time.time()
                 get_rate_limiter().record_request(current_account.id)
@@ -264,38 +284,48 @@ async def handle_chat_completions(request: Request):
     
     if stream:
         async def generate():
-            for chunk in [content[i:i+20] for i in range(0, len(content), 20)]:
-                data = {
-                    "id": f"chatcmpl-{log_id}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": model,
-                    "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.02)
+            if content:
+                for chunk in [content[i:i+20] for i in range(0, len(content), 20)]:
+                    data = {
+                        "id": f"chatcmpl-{log_id}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                    await asyncio.sleep(0.02)
+
+            tool_calls = _to_openai_tool_calls(tool_uses)
+            if tool_calls:
+                for index, tool_call in enumerate(tool_calls):
+                    tool_call_delta = {
+                        "index": index,
+                        "id": tool_call.get("id"),
+                        "type": tool_call.get("type"),
+                        "function": tool_call.get("function")
+                    }
+                    data = {
+                        "id": f"chatcmpl-{log_id}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {"tool_calls": [tool_call_delta]}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
             
             end_data = {
                 "id": f"chatcmpl-{log_id}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
                 "model": model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls" if tool_uses else "stop"}]
             }
             yield f"data: {json.dumps(end_data)}\n\n"
             yield "data: [DONE]\n\n"
         
         return StreamingResponse(generate(), media_type="text/event-stream")
     
-    return {
-        "id": f"chatcmpl-{log_id}",
-        "object": "chat.completion",
-        "created": int(datetime.now().timestamp()),
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop"
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    }
+    if result is None:
+        result = {"content": [content], "tool_uses": tool_uses, "stop_reason": "stop"}
+    return convert_kiro_response_to_openai(result, model, f"chatcmpl-{log_id}")
