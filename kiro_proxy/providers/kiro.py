@@ -69,7 +69,7 @@ class KiroProvider(BaseProvider):
     def build_request(
         self,
         messages: list = None,
-        model: str = "claude-sonnet-4",
+        model: str = "claude-sonnet-4.5",
         user_content: str = "",
         history: List[dict] = None,
         tools: List[dict] = None,

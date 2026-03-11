@@ -45,7 +45,7 @@ MODEL_MAPPING = {
     "opus": "claude-opus-4.5",
 }
 
-KIRO_MODELS = {"auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "claude-opus-4.5"}
+KIRO_MODELS = {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "claude-opus-4.5", "deepseek-3.2", "minimax-m2.1", "qwen3-coder-next"}
 
 def map_model_name(model: str) -> str:
     """将外部模型名称映射到 Kiro 支持的名称"""

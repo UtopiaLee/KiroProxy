@@ -6,7 +6,7 @@ import uuid
 import httpx
 from pathlib import Path
 
-TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-auth-token.json"
+TOKEN_PATH = Path.home() / ".aws/sso/cache/kiro-proxy-auth.json"
 MACHINE_ID = "fa41d5def91e29225c73f6ea8ee0941a87bd812aae5239e3dde72c3ba7603a26"
 MODELS_URL = "https://q.us-east-1.amazonaws.com/ListAvailableModels"
 
