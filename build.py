@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-APP_NAME = "KiroProxy"
+APP_NAME = "KPI"
 VERSION = "1.7.16"
 MAIN_SCRIPT = "run.py"
 ICON_DIR = Path("assets")

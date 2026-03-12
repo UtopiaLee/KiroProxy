@@ -97,7 +97,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='KiroProxy',
+    name='KPI',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

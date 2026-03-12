@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 env:
-  APP_NAME: KiroProxy
+  APP_NAME: KPI
 
 jobs:
   build-linux:
@@ -55,40 +55,40 @@ jobs:
           VERSION=${{ steps.version.outputs.VERSION }}
           
           # Binary (standalone)
-          cp dist/KiroProxy release/KiroProxy-${VERSION}-linux-x86_64
-          chmod +x release/KiroProxy-${VERSION}-linux-x86_64
+          cp dist/KPI release/KPI-${VERSION}-linux-x86_64
+          chmod +x release/KPI-${VERSION}-linux-x86_64
           
           # tar.gz
-          tar -czvf release/KiroProxy-${VERSION}-linux-x86_64.tar.gz -C dist KiroProxy
+          tar -czvf release/KPI-${VERSION}-linux-x86_64.tar.gz -C dist KPI
           
           # deb package
           fpm -s dir -t deb \
-            -n kiroproxy \
+            -n kpi \
             -v ${VERSION} \
             --description "Kiro API Proxy Server" \
             --license "MIT" \
             --architecture amd64 \
             --maintainer "petehsu" \
             --url "https://github.com/petehsu/KiroProxy" \
-            -p release/kiroproxy_${VERSION}_amd64.deb \
-            dist/KiroProxy=/usr/local/bin/KiroProxy
+            -p release/kpi_${VERSION}_amd64.deb \
+            dist/KPI=/usr/local/bin/kpi
           
           # rpm package
           fpm -s dir -t rpm \
-            -n kiroproxy \
+            -n kpi \
             -v ${VERSION} \
             --description "Kiro API Proxy Server" \
             --license "MIT" \
             --architecture x86_64 \
             --maintainer "petehsu" \
             --url "https://github.com/petehsu/KiroProxy" \
-            -p release/kiroproxy-${VERSION}-1.x86_64.rpm \
-            dist/KiroProxy=/usr/local/bin/KiroProxy
+            -p release/kpi-${VERSION}-1.x86_64.rpm \
+            dist/KPI=/usr/local/bin/kpi
             
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KiroProxy-Linux
+          name: KPI-Linux
           path: release/*
 
   build-windows:
@@ -129,15 +129,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path release
           
           # exe (standalone)
-          Copy-Item dist/KiroProxy.exe release/KiroProxy-${VERSION}-windows-x86_64.exe
+          Copy-Item dist/KPI.exe release/KPI-${VERSION}-windows-x86_64.exe
           
           # zip
-          Compress-Archive -Path dist/KiroProxy.exe -DestinationPath release/KiroProxy-${VERSION}-windows-x86_64.zip
+          Compress-Archive -Path dist/KPI.exe -DestinationPath release/KPI-${VERSION}-windows-x86_64.zip
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KiroProxy-Windows
+          name: KPI-Windows
           path: release/*
 
   build-macos:
@@ -184,16 +184,16 @@ jobs:
           mkdir -p release
           
           # Binary (standalone)
-          cp dist/KiroProxy release/KiroProxy-${VERSION}-macos-x86_64
-          chmod +x release/KiroProxy-${VERSION}-macos-x86_64
+          cp dist/KPI release/KPI-${VERSION}-macos-x86_64
+          chmod +x release/KPI-${VERSION}-macos-x86_64
           
           # zip
-          cd dist && zip -r ../release/KiroProxy-${VERSION}-macos-x86_64.zip KiroProxy && cd ..
+          cd dist && zip -r ../release/KPI-${VERSION}-macos-x86_64.zip KPI && cd ..
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KiroProxy-macOS
+          name: KPI-macOS
           path: release/*
 
   release:
@@ -221,24 +221,38 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: KiroProxy v${{ steps.version.outputs.VERSION }}
+          name: KPI v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Downloads
+            ## 下载
             
-            | Platform | File | Description |
-            |----------|------|-------------|
-            | **Linux** | `KiroProxy-${{ steps.version.outputs.VERSION }}-linux-x86_64` | Standalone binary |
-            | | `KiroProxy-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz` | Compressed archive |
-            | | `kiroproxy_${{ steps.version.outputs.VERSION }}_amd64.deb` | Debian/Ubuntu package |
-            | | `kiroproxy-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm` | Fedora/RHEL/CentOS package |
-            | **Windows** | `KiroProxy-${{ steps.version.outputs.VERSION }}-windows-x86_64.exe` | Standalone executable |
-            | | `KiroProxy-${{ steps.version.outputs.VERSION }}-windows-x86_64.zip` | Compressed archive |
-            | **macOS** | `KiroProxy-${{ steps.version.outputs.VERSION }}-macos-x86_64` | Standalone binary |
-            | | `KiroProxy-${{ steps.version.outputs.VERSION }}-macos-x86_64.zip` | Compressed archive |
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | **Linux** | `KPI-${{ steps.version.outputs.VERSION }}-linux-x86_64` | 独立二进制文件 |
+            | | `KPI-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz` | 压缩存档 |
+            | | `kpi_${{ steps.version.outputs.VERSION }}_amd64.deb` | Debian/Ubuntu 包 |
+            | | `kpi-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm` | Fedora/RHEL/CentOS 包 |
+            | **Windows** | `KPI-${{ steps.version.outputs.VERSION }}-windows-x86_64.exe` | 独立可执行文件 |
+            | | `KPI-${{ steps.version.outputs.VERSION }}-windows-x86_64.zip` | 压缩存档 |
+            | **macOS** | `KPI-${{ steps.version.outputs.VERSION }}-macos-x86_64` | 独立二进制文件 |
+            | | `KPI-${{ steps.version.outputs.VERSION }}-macos-x86_64.zip` | 压缩存档 |
+            
+            ## 快速开始
+            
+            请参考 [快速开始指南](https://github.com/petehsu/KiroProxy/blob/main/kiro_proxy/docs/01-quickstart.md) 了解如何使用。
+            
+            ## 功能特性
+            
+            - 多协议支持（OpenAI / Anthropic / Gemini）
+            - 完整的工具调用支持
+            - 多账户轮换和自动令牌刷新
+            - Web UI 管理界面
+            - 多语言支持（中文/英文）
+            
+            详见 [功能特性文档](https://github.com/petehsu/KiroProxy/blob/main/kiro_proxy/docs/02-features.md)
           files: |
-            artifacts/KiroProxy-Linux/*
-            artifacts/KiroProxy-Windows/*
-            artifacts/KiroProxy-macOS/*
+            artifacts/KPI-Linux/*
+            artifacts/KPI-Windows/*
+            artifacts/KPI-macOS/*
           draft: false
           prerelease: false
         env:
