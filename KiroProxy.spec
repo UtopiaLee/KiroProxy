@@ -17,6 +17,7 @@ all_modules = [
     'kiro_proxy.config',
     'kiro_proxy.converters',
     'kiro_proxy.launcher',
+    'kiro_proxy.startup_window',
     'kiro_proxy.cli',
     'kiro_proxy.web',
     'kiro_proxy.web.webui',
@@ -70,6 +71,10 @@ hiddenimports = [
     'anyio',
     'anyio._backends',
     'anyio._backends._asyncio',
+    'pystray',
+    'PIL',
+    'PIL.Image',
+    'PIL.ImageDraw',
 ] + all_modules
 
 a = Analysis(

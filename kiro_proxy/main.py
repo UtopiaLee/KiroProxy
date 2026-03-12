@@ -19,8 +19,22 @@ from .credential import generate_machine_id, get_kiro_version
 
 def get_resource_path(relative_path: str) -> Path:
     """获取资源文件路径，支持从打包资源读取"""
-    base_path = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(__file__).parent.parent
-    return base_path / relative_path
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller 打包后的路径
+        base_path = Path(sys._MEIPASS)
+    else:
+        # 开发环境路径
+        base_path = Path(__file__).parent.parent
+    
+    resource_path = base_path / relative_path
+    
+    # 调试日志
+    if not resource_path.exists():
+        print(f"[WARNING] Resource not found: {resource_path}")
+        print(f"[DEBUG] Base path: {base_path}")
+        print(f"[DEBUG] sys._MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
+    
+    return resource_path
 
 
 @asynccontextmanager
@@ -548,13 +562,41 @@ async def api_docs_content(doc_id: str):
 
 def run(port: int = 8080):
     import uvicorn
+    import threading
+    import time
     from .core import state
     state.current_port = port  # 设置当前端口供 WebUI 显示
+    
     print(f"\n{'='*50}")
     print(f"  Kiro API Proxy v1.7.16")
     print(f"  http://localhost:{port}")
     print(f"{'='*50}\n")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    # 在后台线程中启动 uvicorn 服务器
+    def run_server():
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    
+    server_thread = threading.Thread(target=run_server, daemon=False)
+    server_thread.start()
+    
+    # 等待服务启动完成
+    time.sleep(2)
+    
+    # 创建并运行启动窗口（在主线程中）
+    startup_window = None
+    try:
+        from .startup_window import StartupWindow
+        startup_window = StartupWindow(port, service_process=None)
+        startup_window.service_running = True  # 标记服务已启动
+        startup_window.run()  # 这会调用 create_window() 并运行主循环
+    except Exception as e:
+        print(f"[!] 启动窗口错误: {e}")
+        # 如果没有窗口，保持主线程运行
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            pass
+
 
 
 if __name__ == "__main__":

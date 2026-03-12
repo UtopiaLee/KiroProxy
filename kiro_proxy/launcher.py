@@ -7,7 +7,14 @@ import socket
 import json
 import webbrowser
 import threading
+import time
+import atexit
 from pathlib import Path
+
+
+# 全局服务器线程引用
+_server_thread = None
+_server_running = True
 
 
 def get_config_path() -> Path:
@@ -48,28 +55,45 @@ def check_port_available(port: int) -> bool:
         return False
 
 
+def cleanup_server():
+    """清理服务器线程"""
+    global _server_running
+    _server_running = False
+
+
 def launch_with_ui():
     """显示端口配置 UI 并启动服务器"""
+    global _server_thread, _server_running
+    
     try:
         import tkinter as tk
-        from tkinter import ttk, messagebox
+        from tkinter import ttk
     except ImportError:
-        # tkinter 不可用，直接启动
-        print("[!] tkinter 不可用，使用默认端口 8080 启动")
+        print("[!] tkinter 不可用，使用默认端口 8080")
         from kiro_proxy.main import run
         run(8080)
         return
     
     config = load_config()
+    port = config.get("port", 8080)
+    language = config.get("language", "zh")
     
-    # 创建主窗口
+    # 加载选定的语言
+    try:
+        from kiro_proxy.web.i18n import load_language
+        load_language(language)
+    except:
+        pass
+    
+    # 创建端口选择窗口
     root = tk.Tk()
-    root.title("Kiro API Proxy")
+    root.title("Kiro API Proxy - 启动配置")
     root.resizable(False, False)
     
-    # 设置窗口大小和位置（居中）
-    window_width = 400
+    # 设置窗口大小和位置
+    window_width = 450
     window_height = 320
+
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     x = (screen_width - window_width) // 2
@@ -87,163 +111,79 @@ def launch_with_ui():
     
     # 标题
     title_label = ttk.Label(
-        main_frame, 
+        main_frame,
         text="🚀 Kiro API Proxy",
-        font=("Segoe UI", 18, "bold") if sys.platform == "win32" else ("SF Pro", 18, "bold")
+        font=("Segoe UI", 16, "bold") if sys.platform == "win32" else ("SF Pro", 16, "bold")
     )
-    title_label.pack(pady=(0, 5))
+    title_label.pack(pady=(0, 20))
     
-    # 版本
-    version_label = ttk.Label(main_frame, text="v1.7.16", foreground="gray")
-    version_label.pack(pady=(0, 20))
-    
-    # 端口设置框架
-    port_frame = ttk.Frame(main_frame)
+    # 端口配置框架
+    port_frame = ttk.LabelFrame(main_frame, text="服务配置", padding=10)
     port_frame.pack(fill="x", pady=10)
     
-    port_label = ttk.Label(port_frame, text="Port 端口:")
-    port_label.pack(side="left")
+    # 端口标签和输入框
+    ttk.Label(port_frame, text="端口号:", font=("Segoe UI", 10)).pack(side="left", padx=5)
+    port_var = tk.StringVar(value=str(port))
+    port_entry = ttk.Entry(port_frame, textvariable=port_var, width=10, font=("Segoe UI", 10))
+    port_entry.pack(side="left", padx=5)
     
-    port_var = tk.StringVar(value=str(config.get("port", 8080)))
-    port_entry = ttk.Entry(port_frame, textvariable=port_var, width=10, justify="center")
-    port_entry.pack(side="left", padx=10)
+    # 自动打开浏览器复选框
+    auto_open_var = tk.BooleanVar(value=config.get("auto_open_browser", True))
+    auto_open_check = ttk.Checkbutton(main_frame, text="启动时自动打开浏览器", variable=auto_open_var)
+    auto_open_check.pack(pady=10)
     
-    port_hint = ttk.Label(port_frame, text="(1024-65535)", foreground="gray")
-    port_hint.pack(side="left")
-    
-    # 状态标签
-    status_var = tk.StringVar(value="")
-    status_label = ttk.Label(main_frame, textvariable=status_var, foreground="gray")
-    status_label.pack(pady=5)
-    
-    # 选项框架
-    options_frame = ttk.Frame(main_frame)
-    options_frame.pack(fill="x", pady=10)
-    
+    # 记住端口复选框
     remember_var = tk.BooleanVar(value=config.get("remember_port", True))
-    remember_check = ttk.Checkbutton(options_frame, text="Remember port 记住端口", variable=remember_var)
-    remember_check.pack(anchor="w")
-    
-    browser_var = tk.BooleanVar(value=config.get("auto_open_browser", True))
-    browser_check = ttk.Checkbutton(options_frame, text="Auto open browser 自动打开浏览器", variable=browser_var)
-    browser_check.pack(anchor="w")
-    
-    # 语言选择
-    lang_frame = ttk.Frame(main_frame)
-    lang_frame.pack(fill="x", pady=5)
-    
-    lang_label = ttk.Label(lang_frame, text="Language 语言:")
-    lang_label.pack(side="left")
-    
-    lang_var = tk.StringVar(value=config.get("language", "zh"))
-    lang_combo = ttk.Combobox(lang_frame, textvariable=lang_var, state="readonly", width=15)
-    lang_combo["values"] = ("zh - 中文", "en - English")
-    lang_combo.set("zh - 中文" if lang_var.get() == "zh" else "en - English")
-    lang_combo.pack(side="left", padx=10)
+    remember_check = ttk.Checkbutton(main_frame, text="记住端口设置", variable=remember_var)
+    remember_check.pack(pady=5)
     
     # 按钮框架
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(pady=20)
     
-    result = {"port": None, "auto_open": False, "language": "zh"}
-    
-    def validate_and_check():
-        """验证端口并检查可用性"""
-        try:
-            port = int(port_var.get())
-            if port < 1024 or port > 65535:
-                status_var.set("❌ Port range / 端口范围: 1024-65535")
-                status_label.configure(foreground="red")
-                return None
-            
-            if not check_port_available(port):
-                status_var.set(f"❌ Port {port} in use / 端口已被占用")
-                status_label.configure(foreground="red")
-                return None
-            
-            status_var.set(f"✅ Port {port} available / 可用")
-            status_label.configure(foreground="green")
-            return port
-        except ValueError:
-            status_var.set("❌ Invalid port / 请输入有效端口号")
-            status_label.configure(foreground="red")
-            return None
-    
-    def on_port_change(*args):
-        """端口变化时验证"""
-        validate_and_check()
-    
-    port_var.trace_add("write", on_port_change)
-    
     def on_start():
-        """点击启动按钮"""
-        port = validate_and_check()
-        if port is None:
+        """启动服务"""
+        try:
+            selected_port = int(port_var.get())
+            if selected_port < 1 or selected_port > 65535:
+                raise ValueError("端口号必须在 1-65535 之间")
+        except ValueError as e:
+            print(f"[!] 无效的端口号: {e}")
             return
         
-        # 获取语言设置
-        lang = lang_combo.get().split(" - ")[0]
-        
         # 保存配置
-        if remember_var.get():
-            save_config({
-                "port": port,
-                "remember_port": True,
-                "auto_open_browser": browser_var.get(),
-                "language": lang
-            })
+        new_config = {
+            "port": selected_port,
+            "remember_port": remember_var.get(),
+            "auto_open_browser": auto_open_var.get(),
+            "language": language
+        }
+        save_config(new_config)
         
-        result["port"] = port
-        result["auto_open"] = browser_var.get()
-        result["language"] = lang
-        root.quit()
+        # 关闭配置窗口
         root.destroy()
+        
+        # 启动服务
+        from kiro_proxy.main import run
+        run(selected_port)
     
     def on_cancel():
-        """点击取消按钮"""
-        root.quit()
+        """取消启动"""
         root.destroy()
+        sys.exit(0)
     
-    start_btn = ttk.Button(button_frame, text="▶ Start 启动", command=on_start, width=18)
+    start_btn = ttk.Button(button_frame, text="启动服务", command=on_start, width=15)
     start_btn.pack(side="left", padx=5)
     
-    cancel_btn = ttk.Button(button_frame, text="Cancel 取消", command=on_cancel, width=12)
+    cancel_btn = ttk.Button(button_frame, text="取消", command=on_cancel, width=15)
     cancel_btn.pack(side="left", padx=5)
     
-    # 绑定回车键
-    root.bind("<Return>", lambda e: on_start())
-    root.bind("<Escape>", lambda e: on_cancel())
+    # 设置窗口始终在前台
+    root.attributes('-topmost', True)
     
-    # 初始验证
-    validate_and_check()
-    
-    # 聚焦到端口输入框
-    port_entry.focus_set()
-    port_entry.select_range(0, tk.END)
-    
-    # 运行主循环
+    # 运行窗口
     root.mainloop()
-    
-    # 用户选择后启动服务器
-    if result["port"]:
-        port = result["port"]
-        auto_open = result["auto_open"]
-        
-        # 自动打开浏览器
-        if auto_open:
-            def open_browser():
-                import time
-                time.sleep(1.5)  # 等待服务器启动
-                webbrowser.open(f"http://localhost:{port}")
-            threading.Thread(target=open_browser, daemon=True).start()
-        
-        # 加载选定的语言
-        from kiro_proxy.web.i18n import load_language
-        load_language(result["language"])
-        
-        # 启动服务器
-        from kiro_proxy.main import run
-        run(port)
+
 
 
 if __name__ == "__main__":

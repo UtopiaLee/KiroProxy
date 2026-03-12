@@ -42,6 +42,7 @@ import kiro_proxy.credential.quota
 import kiro_proxy.credential.refresher
 import kiro_proxy.auth
 import kiro_proxy.auth.device_flow
+import kiro_proxy.startup_window
 # ============================================================
 
 if __name__ == "__main__":

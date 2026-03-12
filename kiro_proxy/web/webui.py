@@ -1497,9 +1497,15 @@ JS_SCRIPTS = JS_UTILS + JS_TABS + JS_STATUS + JS_DOCS + JS_STATS + JS_LOGS + JS_
 # ==================== 组装最终 HTML ====================
 def get_html_page() -> str:
     """生成带有 i18n 翻译的 HTML 页面"""
-    from .i18n import t, get_current_lang
-    
-    lang = get_current_lang()
+    try:
+        from .i18n import t, get_current_lang
+        lang = get_current_lang()
+    except Exception as e:
+        print(f"[WARNING] Failed to load i18n: {e}, using default language 'zh'")
+        lang = "zh"
+        # 简单的翻译函数降级
+        def t(key):
+            return key
     
     # 转义 JavaScript 字符串中的特殊字符
     def js_escape(s):
