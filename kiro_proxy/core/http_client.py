@@ -11,11 +11,44 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import httpx
 
 
-_HTTP_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="kiro-http")
+_HTTP_EXECUTOR_LOCK = threading.Lock()
+_HTTP_EXECUTOR: Optional[ThreadPoolExecutor] = None
+
+
+def _create_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=8, thread_name_prefix="kiro-http")
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _HTTP_EXECUTOR
+    with _HTTP_EXECUTOR_LOCK:
+        if _HTTP_EXECUTOR is None or getattr(_HTTP_EXECUTOR, "_shutdown", False):
+            _HTTP_EXECUTOR = _create_executor()
+        return _HTTP_EXECUTOR
+
+
+def shutdown_http_executor(wait: bool = False):
+    """显式关闭 HTTP 线程池。"""
+    global _HTTP_EXECUTOR
+    with _HTTP_EXECUTOR_LOCK:
+        executor = _HTTP_EXECUTOR
+        _HTTP_EXECUTOR = None
+
+    if executor and not getattr(executor, "_shutdown", False):
+        executor.shutdown(wait=wait, cancel_futures=True)
+
+
+def _reset_executor(closed_executor: ThreadPoolExecutor):
+    """在线程池意外关闭时重建 executor。"""
+    global _HTTP_EXECUTOR
+    with _HTTP_EXECUTOR_LOCK:
+        if _HTTP_EXECUTOR is closed_executor or _HTTP_EXECUTOR is None:
+            _HTTP_EXECUTOR = _create_executor()
 
 
 @dataclass
@@ -28,10 +61,21 @@ class HttpResult:
 
 
 async def run_blocking(func):
-    """在独立线程池中执行阻塞函数。"""
+    """在独立线程池中执行阻塞函数。
+
+    某些 Linux/systemd 运行环境下，线程池可能被意外 shutdown，
+    这里在检测到该异常时自动重建并重试一次。
+    """
     loop = asyncio.get_running_loop()
-    future = _HTTP_EXECUTOR.submit(func)
-    return await asyncio.wrap_future(future, loop=loop)
+    for attempt in range(2):
+        executor = _get_executor()
+        try:
+            future = executor.submit(func)
+            return await asyncio.wrap_future(future, loop=loop)
+        except RuntimeError as e:
+            if "cannot schedule new futures after shutdown" not in str(e) or attempt == 1:
+                raise
+            _reset_executor(executor)
 
 
 async def http_post(url: str, *, json: Any = None, headers: Optional[dict] = None, timeout: float = 30, verify: bool = False) -> HttpResult:
