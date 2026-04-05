@@ -146,16 +146,21 @@ async def get_usage_limits(
     headers = build_usage_headers(access_token, machine_id, kiro_version)
     
     try:
-        async with httpx.AsyncClient(timeout=10, verify=False) as client:
-            response = await client.get(url, headers=headers)
-            
+        # 这里改为同步 Client。
+        # 原因同设备登录流程：在部分运行环境里，httpx.AsyncClient 在 DNS 解析阶段
+        # 可能走到 asyncio 默认 executor，而 executor 若已被 runtime 提前关闭，
+        # 就会报 "cannot schedule new futures after shutdown"。
+        # 用量查询是低频管理接口，短暂同步阻塞可接受，但稳定性更重要。
+        with httpx.Client(timeout=10, verify=False) as client:
+            response = client.get(url, headers=headers)
+
             if response.status_code != 200:
                 return False, {"error": f"API 请求失败: {response.status_code} - {response.text[:200]}"}
-            
+
             data = response.json()
             usage_info = calculate_balance(data)
             return True, usage_info
-            
+
     except httpx.TimeoutException:
         return False, {"error": "请求超时"}
     except Exception as e:
