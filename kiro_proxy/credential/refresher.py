@@ -62,7 +62,7 @@ class TokenRefresher:
                 if auth_method == "idc":
                     if not self.credentials.client_id or not self.credentials.client_secret:
                         return False, "IdC 认证缺少 client_id 或 client_secret"
-                    
+
                     body = {
                         "refreshToken": self.credentials.refresh_token,
                         "clientId": self.credentials.client_id,
@@ -81,9 +81,9 @@ class TokenRefresher:
                         "User-Agent": f"KiroIDE-{kiro_version}-{machine_id}",
                         "Accept": "application/json, text/plain, */*",
                     }
-                
+
                 resp = await client.post(refresh_url, json=body, headers=headers)
-                
+
                 if resp.status_code != 200:
                     error_text = resp.text
                     if resp.status_code == 401:
@@ -92,28 +92,28 @@ class TokenRefresher:
                         return False, "请求过于频繁，请稍后重试"
                     else:
                         return False, f"刷新失败: {resp.status_code} - {error_text[:200]}"
-                
+
                 data = resp.json()
-                
+
                 new_token = data.get("accessToken") or data.get("access_token")
                 if not new_token:
                     return False, "响应中没有 access_token"
-                
+
                 # 更新凭证
                 self.credentials.access_token = new_token
-                
+
                 if rt := data.get("refreshToken") or data.get("refresh_token"):
                     self.credentials.refresh_token = rt
-                
+
                 if arn := data.get("profileArn"):
                     self.credentials.profile_arn = arn
-                
+
                 if expires_in := data.get("expiresIn") or data.get("expires_in"):
                     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                     self.credentials.expires_at = expires_at.isoformat()
-                
+
                 self.credentials.last_refresh = datetime.now(timezone.utc).isoformat()
-                
+
                 return True, new_token
                 
         except Exception as e:

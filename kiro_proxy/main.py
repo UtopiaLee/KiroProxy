@@ -1,7 +1,6 @@
 """Kiro API Proxy - 主应用"""
 import json
 import uuid
-import httpx
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -10,7 +9,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import MODELS_URL
-from .core import state, scheduler, stats_manager
+from .core import state, scheduler, stats_manager, http_get
 from .core.admin_auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, is_authenticated
 from .core.api_key_auth import extract_api_key, is_api_key_configured, verify_api_key
 from .handlers import anthropic, openai, gemini, admin
@@ -172,22 +171,21 @@ async def models():
             "amz-sdk-invocation-id": str(uuid.uuid4()),
             "Authorization": f"Bearer {token}",
         }
-        async with httpx.AsyncClient(verify=False, timeout=30) as client:
-            resp = await client.get(MODELS_URL, headers=headers, params={"origin": "AI_EDITOR"})
-            if resp.status_code == 200:
-                data = resp.json()
-                return {
-                    "object": "list",
-                    "data": [
-                        {
-                            "id": m["modelId"],
-                            "object": "model",
-                            "owned_by": "kiro",
-                            "name": m["modelName"],
-                        }
-                        for m in data.get("models", [])
-                    ]
-                }
+        resp = await http_get(MODELS_URL, headers=headers, params={"origin": "AI_EDITOR"}, timeout=30, verify=False)
+        if resp.status_code == 200:
+            data = json.loads(resp.text)
+            return {
+                "object": "list",
+                "data": [
+                    {
+                        "id": m["modelId"],
+                        "object": "model",
+                        "owned_by": "kiro",
+                        "name": m["modelName"],
+                    }
+                    for m in data.get("models", [])
+                ]
+            }
     except Exception:
         pass
     

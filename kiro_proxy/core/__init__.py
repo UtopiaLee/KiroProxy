@@ -6,6 +6,7 @@ from .retry import RetryableRequest, is_retryable_error, RETRYABLE_STATUS_CODES
 from .scheduler import scheduler
 from .stats import stats_manager
 from .browser import detect_browsers, open_url, get_browsers_info
+from .http_client import http_get, http_post, HttpResult
 from .flow_monitor import flow_monitor, FlowMonitor, LLMFlow, FlowState, TokenUsage
 from .usage import get_usage_limits, get_account_usage, UsageInfo
 from .history_manager import (
@@ -36,6 +37,7 @@ __all__ = [
     "RetryableRequest", "is_retryable_error", "RETRYABLE_STATUS_CODES",
     "scheduler", "stats_manager",
     "detect_browsers", "open_url", "get_browsers_info",
+    "http_get", "http_post", "HttpResult",
     "flow_monitor", "FlowMonitor", "LLMFlow", "FlowState", "TokenUsage",
     "get_usage_limits", "get_account_usage", "UsageInfo",
     "HistoryManager", "HistoryConfig", "TruncateStrategy",

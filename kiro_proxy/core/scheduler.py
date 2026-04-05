@@ -80,9 +80,9 @@ class BackgroundScheduler:
     
     async def _health_check(self, state):
         """健康检查"""
-        import httpx
         from ..config import MODELS_URL
         from ..credential import CredentialStatus
+        from .http_client import http_get
         
         for acc in state.accounts:
             if not acc.enabled:
@@ -98,24 +98,25 @@ class BackgroundScheduler:
                     "Authorization": f"Bearer {token}",
                     "content-type": "application/json"
                 }
-                
-                async with httpx.AsyncClient(verify=False, timeout=10) as client:
-                    resp = await client.get(
-                        MODELS_URL, 
-                        headers=headers,
-                        params={"origin": "AI_EDITOR"}
-                    )
-                    
-                    if resp.status_code == 200:
-                        if acc.status == CredentialStatus.UNHEALTHY:
-                            acc.status = CredentialStatus.ACTIVE
-                            print(f"[HealthCheck] 账号恢复健康: {acc.name}")
-                    elif resp.status_code == 401:
-                        acc.status = CredentialStatus.UNHEALTHY
-                        print(f"[HealthCheck] 账号认证失败: {acc.name}")
-                    elif resp.status_code == 429:
-                        # 配额超限，不改变状态
-                        pass
+
+                resp = await http_get(
+                    MODELS_URL,
+                    headers=headers,
+                    params={"origin": "AI_EDITOR"},
+                    timeout=10,
+                    verify=False,
+                )
+
+                if resp.status_code == 200:
+                    if acc.status == CredentialStatus.UNHEALTHY:
+                        acc.status = CredentialStatus.ACTIVE
+                        print(f"[HealthCheck] 账号恢复健康: {acc.name}")
+                elif resp.status_code == 401:
+                    acc.status = CredentialStatus.UNHEALTHY
+                    print(f"[HealthCheck] 账号认证失败: {acc.name}")
+                elif resp.status_code == 429:
+                    # 配额超限，不改变状态
+                    pass
                         
             except Exception as e:
                 print(f"[HealthCheck] 检查失败 {acc.name}: {e}")

@@ -11,7 +11,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..config import KIRO_API_URL, map_model_name
-from ..core import state, is_retryable_error, stats_manager
+from ..core import state, is_retryable_error, stats_manager, http_post
 from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config
 from ..core.error_handler import classify_error, ErrorType, format_error_log
@@ -409,10 +409,9 @@ async def handle_responses(request: Request):
     async def api_caller(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
-                resp = await client.post(KIRO_API_URL, json=req, headers=headers)
-                if resp.status_code == 200:
-                    return parse_event_stream(resp.content)
+            resp = await http_post(KIRO_API_URL, json=req, headers=headers, timeout=60, verify=False)
+            if resp.status_code == 200:
+                return parse_event_stream(resp.content)
         except Exception as e:
             print(f"[Responses] Summary API 调用失败: {e}")
         return ""
@@ -515,17 +514,16 @@ async def handle_responses(request: Request):
         return await _handle_stream(kiro_request, headers, account, model, log_id, start_time)
     
     # 非流式
-    async with httpx.AsyncClient(verify=False, timeout=120) as client:
-        resp = await client.post(KIRO_API_URL, json=kiro_request, headers=headers)
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, resp.text)
-        
-        result = parse_event_stream_full(resp.content)
-        account.request_count += 1
-        account.last_used = time.time()
-        get_rate_limiter().record_request(account.id)
-        
-        return _build_response(result, model, log_id)
+    resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, timeout=120, verify=False)
+    if resp.status_code != 200:
+        raise HTTPException(resp.status_code, resp.text)
+    
+    result = parse_event_stream_full(resp.content)
+    account.request_count += 1
+    account.last_used = time.time()
+    get_rate_limiter().record_request(account.id)
+    
+    return _build_response(result, model, log_id)
 
 
 def _build_response(result: dict, model: str, response_id: str) -> dict:
