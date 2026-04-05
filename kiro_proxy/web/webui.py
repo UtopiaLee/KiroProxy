@@ -2070,6 +2070,46 @@ function showMessage(message, type = '') {{
   authMessage.className = 'auth-message' + (type ? ' ' + type : '');
 }}
 
+function formatLockTime(seconds) {{
+  const total = Math.max(0, Number(seconds) || 0);
+  if (total < 60) return total + ' 秒';
+  if (total < 3600) return Math.ceil(total / 60) + ' 分钟';
+  if (total < 86400) {{
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.ceil((total % 3600) / 60);
+    return hours + ' 小时' + (minutes > 0 ? minutes + ' 分钟' : '');
+  }}
+  return Math.ceil(total / 86400) + ' 天';
+}}
+
+function getAuthErrorMessage(data, fallback = '登录失败') {{
+  if (!data) return fallback;
+  if (typeof data.detail === 'string') return data.detail;
+  if (data.detail && typeof data.detail === 'object' && data.detail.message) return data.detail.message;
+  return fallback;
+}}
+
+function applyLoginProtection(status) {{
+  const protection = status?.login_protection || {{}};
+  const locked = !!protection.locked;
+  const loginInput = $('#loginPassword');
+  const loginButton = $('#loginForm button');
+
+  if (loginInput) loginInput.disabled = locked;
+  if (loginButton) loginButton.disabled = locked;
+
+  if (status?.password_configured) {{
+    if (locked) {{
+      const retryText = formatLockTime(protection.retry_after_seconds);
+      $('#authDesc').textContent = '登录已临时锁定，请 ' + retryText + ' 后再试。';
+      showMessage('安全限制已触发：当前 IP 在 10 分钟内最多允许 5 次失败，已被临时锁定。', 'error');
+    }} else {{
+      $('#authDesc').textContent = '请输入后台密码，未登录无法进入管理后台。';
+      showMessage('');
+    }}
+  }}
+}}
+
 function setLoading(button, loadingText, restoreText) {{
   if (!button) return () => {{}};
   button.disabled = true;
@@ -2093,7 +2133,10 @@ function renderAuthView(status) {{
     $('#setupForm').style.display = 'none';
     $('#loginForm').style.display = 'flex';
     $('#authSwitch').innerHTML = '';
-    $('#loginPassword').focus();
+    applyLoginProtection(status);
+    if (!status?.login_protection?.locked) {{
+      $('#loginPassword').focus();
+    }}
   }} else {{
     $('#authDesc').textContent = '首次使用请先初始化后台密码，之后访问后台必须先登录。';
     $('#setupForm').style.display = 'flex';
@@ -2167,7 +2210,13 @@ $('#loginForm').addEventListener('submit', async (event) => {{
     }});
     const data = await response.json();
     if (!response.ok) {{
-      showMessage(data.detail || '登录失败', 'error');
+      showMessage(getAuthErrorMessage(data, '登录失败'), 'error');
+      if (data?.detail?.login_protection) {{
+        applyLoginProtection({{
+          password_configured: true,
+          login_protection: data.detail.login_protection
+        }});
+      }}
       return;
     }}
     showMessage(data.message || '登录成功，正在进入后台...', 'success');
@@ -2183,6 +2232,7 @@ loadAuthStatus();
 </script>
 </body>
 </html>'''
+
 
 
 

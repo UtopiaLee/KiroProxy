@@ -10,12 +10,15 @@ from fastapi import Request, HTTPException, Query
 from ..config import TOKEN_PATH, MODELS_URL
 from ..core import state, Account, stats_manager, get_browsers_info, open_url, flow_monitor, get_account_usage, http_get
 from ..core.admin_auth import (
+    get_login_attempt_status,
     MIN_PASSWORD_LENGTH,
     create_session,
     get_session_id,
     invalidate_session,
     is_authenticated,
     is_password_configured,
+    register_failed_login_attempt,
+    reset_login_attempts,
     set_admin_password,
     verify_admin_password,
 )
@@ -52,6 +55,7 @@ async def get_admin_auth_status(request: Request):
         "authenticated": is_authenticated(request),
         "password_configured": is_password_configured(),
         "password_min_length": MIN_PASSWORD_LENGTH,
+        "login_protection": get_login_attempt_status(request),
     }
 
 
@@ -89,13 +93,43 @@ async def login_admin(request: Request):
     if not is_password_configured():
         raise HTTPException(400, "请先初始化后台密码")
 
+    attempt_status = get_login_attempt_status(request)
+    if attempt_status["locked"]:
+        raise HTTPException(
+            429,
+            detail={
+                "message": f"登录失败次数过多，请在 {attempt_status['retry_after_seconds']} 秒后重试",
+                "retry_after_seconds": attempt_status["retry_after_seconds"],
+                "login_protection": attempt_status,
+            },
+        )
+
     body = await request.json()
     password = (body.get("password") or "").strip()
 
     if not password:
         raise HTTPException(400, "请输入后台密码")
     if not verify_admin_password(password):
-        raise HTTPException(401, "后台密码错误")
+        attempt_status = register_failed_login_attempt(request)
+        if attempt_status["locked"]:
+            raise HTTPException(
+                429,
+                detail={
+                    "message": f"登录失败次数过多，请在 {attempt_status['retry_after_seconds']} 秒后重试",
+                    "retry_after_seconds": attempt_status["retry_after_seconds"],
+                    "login_protection": attempt_status,
+                },
+            )
+
+        raise HTTPException(
+            401,
+            detail={
+                "message": "后台密码错误",
+                "login_protection": attempt_status,
+            },
+        )
+
+    reset_login_attempts(request)
 
     return {
         "ok": True,
