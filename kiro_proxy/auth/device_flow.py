@@ -97,10 +97,14 @@ async def start_device_flow(region: str = "us-east-1") -> Tuple[bool, dict]:
     
     oidc_base = f"https://oidc.{region}.amazonaws.com"
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    # 这里使用同步 httpx.Client，避免在某些 Windows 打包/线程场景下
+    # asyncio 默认 executor 被提前关闭后，AsyncClient DNS 解析报
+    # "cannot schedule new futures after shutdown"。
+    # 登录相关请求频率很低，短暂阻塞当前请求是可接受的，优先保证稳定性。
+    with httpx.Client(timeout=30) as client:
         # Step 1: 注册 OIDC 客户端
         print(f"[DeviceFlow] Step 1: 注册 OIDC 客户端...")
-        
+
         reg_body = {
             "clientName": "Kiro Proxy",
             "clientType": "public",
@@ -108,61 +112,61 @@ async def start_device_flow(region: str = "us-east-1") -> Tuple[bool, dict]:
             "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
             "issuerUrl": KIRO_START_URL
         }
-        
+
         try:
-            reg_resp = await client.post(
+            reg_resp = client.post(
                 f"{oidc_base}/client/register",
                 json=reg_body,
                 headers={"Content-Type": "application/json"}
             )
         except Exception as e:
             return False, {"error": f"注册客户端请求失败: {e}"}
-        
+
         if reg_resp.status_code != 200:
             return False, {"error": f"注册客户端失败: {reg_resp.text}"}
-        
+
         reg_data = reg_resp.json()
         client_id = reg_data.get("clientId")
         client_secret = reg_data.get("clientSecret")
-        
+
         if not client_id or not client_secret:
             return False, {"error": "注册响应缺少 clientId 或 clientSecret"}
-        
+
         print(f"[DeviceFlow] 客户端注册成功: {client_id[:20]}...")
-        
+
         # Step 2: 发起设备授权
         print(f"[DeviceFlow] Step 2: 发起设备授权...")
-        
+
         auth_body = {
             "clientId": client_id,
             "clientSecret": client_secret,
             "startUrl": KIRO_START_URL
         }
-        
+
         try:
-            auth_resp = await client.post(
+            auth_resp = client.post(
                 f"{oidc_base}/device_authorization",
                 json=auth_body,
                 headers={"Content-Type": "application/json"}
             )
         except Exception as e:
             return False, {"error": f"设备授权请求失败: {e}"}
-        
+
         if auth_resp.status_code != 200:
             return False, {"error": f"设备授权失败: {auth_resp.text}"}
-        
+
         auth_data = auth_resp.json()
         device_code = auth_data.get("deviceCode")
         user_code = auth_data.get("userCode")
         verification_uri = auth_data.get("verificationUriComplete") or auth_data.get("verificationUri")
         interval = auth_data.get("interval", 5)
         expires_in = auth_data.get("expiresIn", 600)
-        
+
         if not device_code or not user_code or not verification_uri:
             return False, {"error": "设备授权响应缺少必要字段"}
-        
+
         print(f"[DeviceFlow] 设备码获取成功: {user_code}")
-        
+
         # 保存状态
         _login_state = DeviceFlowState(
             client_id=client_id,
@@ -175,7 +179,7 @@ async def start_device_flow(region: str = "us-east-1") -> Tuple[bool, dict]:
             region=region,
             started_at=time.time()
         )
-        
+
         return True, {
             "user_code": user_code,
             "verification_uri": verification_uri,
@@ -213,9 +217,9 @@ async def poll_device_flow() -> Tuple[bool, dict]:
         "deviceCode": _login_state.device_code
     }
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    with httpx.Client(timeout=30) as client:
         try:
-            token_resp = await client.post(
+            token_resp = client.post(
                 f"{oidc_base}/token",
                 json=token_body,
                 headers={"Content-Type": "application/json"}
@@ -425,9 +429,9 @@ async def exchange_social_auth_token(code: str, state: str) -> Tuple[bool, dict]
         "code_verifier": _social_auth_state.code_verifier,
     }
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    with httpx.Client(timeout=30) as client:
         try:
-            token_resp = await client.post(
+            token_resp = client.post(
                 f"{KIRO_AUTH_ENDPOINT}/oauth/token",
                 json=token_body,
                 headers={"Content-Type": "application/json"}
@@ -435,30 +439,30 @@ async def exchange_social_auth_token(code: str, state: str) -> Tuple[bool, dict]
         except Exception as e:
             _social_auth_state = None
             return False, {"error": f"Token 请求失败: {e}"}
-        
+
         if token_resp.status_code != 200:
             error_text = token_resp.text
             _social_auth_state = None
             return False, {"error": f"Token 交换失败: {error_text}"}
-        
+
         token_data = token_resp.json()
-        
+
         credentials = {
             "accessToken": token_data.get("access_token"),
             "refreshToken": token_data.get("refresh_token"),
             "expiresAt": datetime.now(timezone.utc).isoformat(),
             "authMethod": "social",
         }
-        
+
         # 计算过期时间
         if expires_in := token_data.get("expires_in"):
             from datetime import timedelta
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             credentials["expiresAt"] = expires_at.isoformat()
-        
+
         provider = _social_auth_state.provider
         _social_auth_state = None
-        
+
         print(f"[SocialAuth] {provider} 登录成功！")
         return True, {"completed": True, "credentials": credentials, "provider": provider}
 
