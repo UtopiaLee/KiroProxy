@@ -1,5 +1,6 @@
 """Kiro API Proxy - 主应用"""
 import json
+import os
 import uuid
 import sys
 from pathlib import Path
@@ -682,18 +683,38 @@ async def api_docs_content(doc_id: str):
 
 # ==================== 启动 ====================
 
-def run(port: int = 8080):
+def run_server(port: int = 8080):
+    """无 UI 模式启动服务。"""
     import uvicorn
-    import threading
-    import time
     from .core import state
     state.current_port = port  # 设置当前端口供 WebUI 显示
-    
+
     print(f"\n{'='*50}")
     print(f"  Kiro API Proxy v1.7.16")
     print(f"  http://localhost:{port}")
     print(f"{'='*50}\n")
-    
+
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+
+
+def _is_headless_environment() -> bool:
+    """判断当前是否为无图形界面的服务器环境。"""
+    if sys.platform == "win32":
+        return False
+
+    return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+
+
+def run(port: int = 8080):
+    import uvicorn
+    import threading
+    import time
+
+    if _is_headless_environment():
+        print("[Startup] 检测到无图形环境，自动切换为 --no-ui 模式")
+        run_server(port)
+        return
+
     # 在后台线程中启动 uvicorn 服务器
     def run_server():
         uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

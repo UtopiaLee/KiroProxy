@@ -9,8 +9,8 @@ from pathlib import Path
 
 def cmd_serve(args):
     """启动代理服务"""
-    from .main import run
-    run(port=args.port)
+    from .main import run_server
+    run_server(port=args.port)
 
 
 def cmd_accounts_list(args):

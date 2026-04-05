@@ -54,8 +54,8 @@ if __name__ == "__main__":
     # --no-ui 模式：跳过 UI 直接启动
     elif len(sys.argv) > 1 and sys.argv[1] == "--no-ui":
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
-        from kiro_proxy.main import run
-        run(port)
+        from kiro_proxy.main import run_server
+        run_server(port)
     
     # 兼容旧的启动方式: python run.py [port] (数字参数)
     elif len(sys.argv) > 1 and sys.argv[1].isdigit():
