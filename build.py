@@ -12,12 +12,30 @@ import os
 import sys
 import shutil
 import subprocess
+import re
 from pathlib import Path
 
 APP_NAME = "KPI"
-VERSION = "1.7.16"
 MAIN_SCRIPT = "run.py"
 ICON_DIR = Path("assets")
+
+
+def get_version():
+    env_version = os.getenv("VERSION")
+    if env_version:
+        return env_version
+
+    init_file = Path("kiro_proxy/__init__.py")
+    if init_file.exists():
+        text = init_file.read_text(encoding="utf-8")
+        match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+        if match:
+            return match.group(1)
+
+    return "1.0.0"
+
+
+VERSION = get_version()
 
 def get_platform():
     if sys.platform == "win32":

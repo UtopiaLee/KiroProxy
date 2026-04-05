@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -14,56 +12,94 @@ permissions:
 env:
   APP_NAME: KPI
 
+concurrency:
+  group: build-release
+  cancel-in-progress: false
+
 jobs:
-  build-linux:
+  prepare-release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Get version from tag
-        id: version
+        with:
+          fetch-depth: 0
+
+      - name: Determine release version and tag
+        id: meta
+        shell: bash
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
+          git fetch --force --tags
+
+          CURRENT_TAG=$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)
+
+          if [[ -n "${CURRENT_TAG}" ]]; then
+            TAG="${CURRENT_TAG}"
           else
-            VERSION=$(python -c "from pathlib import Path; import re; text = Path('kiro_proxy/__init__.py').read_text(encoding='utf-8'); print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', text).group(1))")
+            LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+
+            if [[ -n "${LATEST_TAG}" ]]; then
+              BASE_VERSION="${LATEST_TAG#v}"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${BASE_VERSION}"
+              MAJOR=${MAJOR:-0}
+              MINOR=${MINOR:-0}
+              PATCH=${PATCH:-0}
+              TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            else
+              BASE_VERSION=$(python -c "from pathlib import Path; import re; text = Path('kiro_proxy/__init__.py').read_text(encoding='utf-8'); m = re.search(r'__version__\s*=\s*\"([^\"]+)\"', text); print(m.group(1) if m else '0.0.1')")
+              TAG="v${BASE_VERSION}"
+            fi
+
+            git tag "${TAG}"
+            git push origin "${TAG}"
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-      
+
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-          
+
       - name: Build binary
         run: python build.py
-        
+
       - name: Install packaging tools
         run: |
           sudo apt-get update
           sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm libfuse2
           sudo gem install --no-document fpm
-          
+
       - name: Create packages
         run: |
+          rm -rf release
           mkdir -p release
-          VERSION=${{ steps.version.outputs.VERSION }}
-          
-          # Binary (standalone)
+
           cp dist/KPI release/KPI-${VERSION}-linux-x86_64
           chmod +x release/KPI-${VERSION}-linux-x86_64
-          
-          # tar.gz
           tar -czvf release/KPI-${VERSION}-linux-x86_64.tar.gz -C dist KPI
-          
-          # deb package
+
           fpm -s dir -t deb \
             -n kpi \
             -v ${VERSION} \
@@ -74,8 +110,7 @@ jobs:
             --url "https://github.com/petehsu/KiroProxy" \
             -p release/kpi_${VERSION}_amd64.deb \
             dist/KPI=/usr/local/bin/kpi
-          
-          # rpm package
+
           fpm -s dir -t rpm \
             -n kpi \
             -v ${VERSION} \
@@ -86,7 +121,7 @@ jobs:
             --url "https://github.com/petehsu/KiroProxy" \
             -p release/kpi-${VERSION}-1.x86_64.rpm \
             dist/KPI=/usr/local/bin/kpi
-            
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -94,48 +129,39 @@ jobs:
           path: release/*
 
   build-windows:
+    needs: prepare-release
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Get version from tag
-        id: version
-        shell: bash
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION=$(python -c "from pathlib import Path; import re; text = Path('kiro_proxy/__init__.py').read_text(encoding='utf-8'); print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', text).group(1))")
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-      
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-          
+
       - name: Build
         run: python build.py
-        
+
       - name: Create packages
         shell: pwsh
         run: |
-          $VERSION = "${{ steps.version.outputs.VERSION }}"
+          if (Test-Path release) { Remove-Item release -Recurse -Force }
           New-Item -ItemType Directory -Force -Path release
-          
-          # exe (standalone)
-          Copy-Item dist/KPI.exe release/KPI-${VERSION}-windows-x86_64.exe
-          
-          # zip
-          Compress-Archive -Path dist/KPI.exe -DestinationPath release/KPI-${VERSION}-windows-x86_64.zip
-          
+
+          Copy-Item dist/KPI.exe release/KPI-$env:VERSION-windows-x86_64.exe
+          Compress-Archive -Path dist/KPI.exe -DestinationPath release/KPI-$env:VERSION-windows-x86_64.zip
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -143,32 +169,27 @@ jobs:
           path: release/*
 
   build-macos:
+    needs: prepare-release
     runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Get version from tag
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION=$(python -c "from pathlib import Path; import re; text = Path('kiro_proxy/__init__.py').read_text(encoding='utf-8'); match = re.search(r'__version__\s*=\s*\"([^\"]+)\"', text); print(match.group(1) if match else '1.0.0')")
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-      
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-          
+
       - name: Generate icon
         run: |
           mkdir -p assets/icon.iconset
@@ -176,22 +197,19 @@ jobs:
             sips -z $size $size assets/icon.png --out assets/icon.iconset/icon_${size}x${size}.png
           done
           iconutil -c icns assets/icon.iconset -o assets/icon.icns
-          
+
       - name: Build
         run: python build.py
-        
+
       - name: Create packages
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
+          rm -rf release
           mkdir -p release
-          
-          # Binary (standalone)
+
           cp dist/KPI release/KPI-${VERSION}-macos-x86_64
           chmod +x release/KPI-${VERSION}-macos-x86_64
-          
-          # zip
           cd dist && zip -r ../release/KPI-${VERSION}-macos-x86_64.zip KPI && cd ..
-          
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -199,57 +217,53 @@ jobs:
           path: release/*
 
   release:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [prepare-release, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Get version from tag
-        id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          
+
       - name: List artifacts
         run: find artifacts -type f
-          
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: KPI v${{ steps.version.outputs.VERSION }}
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: KPI v${{ needs.prepare-release.outputs.version }}
           body: |
             ## 下载
-            
+
             | 平台 | 文件 | 说明 |
             |------|------|------|
-            | **Linux** | `KPI-${{ steps.version.outputs.VERSION }}-linux-x86_64` | 独立二进制文件 |
-            | | `KPI-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz` | 压缩存档 |
-            | | `kpi_${{ steps.version.outputs.VERSION }}_amd64.deb` | Debian/Ubuntu 包 |
-            | | `kpi-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm` | Fedora/RHEL/CentOS 包 |
-            | **Windows** | `KPI-${{ steps.version.outputs.VERSION }}-windows-x86_64.exe` | 独立可执行文件 |
-            | | `KPI-${{ steps.version.outputs.VERSION }}-windows-x86_64.zip` | 压缩存档 |
-            | **macOS** | `KPI-${{ steps.version.outputs.VERSION }}-macos-x86_64` | 独立二进制文件 |
-            | | `KPI-${{ steps.version.outputs.VERSION }}-macos-x86_64.zip` | 压缩存档 |
-            
+            | **Linux** | `KPI-${{ needs.prepare-release.outputs.version }}-linux-x86_64` | 独立二进制文件 |
+            | | `KPI-${{ needs.prepare-release.outputs.version }}-linux-x86_64.tar.gz` | 压缩存档 |
+            | | `kpi_${{ needs.prepare-release.outputs.version }}_amd64.deb` | Debian/Ubuntu 包 |
+            | | `kpi-${{ needs.prepare-release.outputs.version }}-1.x86_64.rpm` | Fedora/RHEL/CentOS 包 |
+            | **Windows** | `KPI-${{ needs.prepare-release.outputs.version }}-windows-x86_64.exe` | 独立可执行文件 |
+            | | `KPI-${{ needs.prepare-release.outputs.version }}-windows-x86_64.zip` | 压缩存档 |
+            | **macOS** | `KPI-${{ needs.prepare-release.outputs.version }}-macos-x86_64` | 独立二进制文件 |
+            | | `KPI-${{ needs.prepare-release.outputs.version }}-macos-x86_64.zip` | 压缩存档 |
+
             ## 快速开始
-            
+
             请参考 [快速开始指南](https://github.com/petehsu/KiroProxy/blob/main/kiro_proxy/docs/01-quickstart.md) 了解如何使用。
-            
+
             ## 功能特性
-            
+
             - 多协议支持（OpenAI / Anthropic / Gemini）
             - 完整的工具调用支持
             - 多账户轮换和自动令牌刷新
             - Web UI 管理界面
             - 多语言支持（中文/英文）
-            
+
             详见 [功能特性文档](https://github.com/petehsu/KiroProxy/blob/main/kiro_proxy/docs/02-features.md)
           files: |
             artifacts/KPI-Linux/*
