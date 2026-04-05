@@ -14,7 +14,7 @@ from ..core.history_manager import HistoryManager, get_history_config, is_conten
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
 from ..credential import quota_manager
-from ..kiro_api import build_headers, build_kiro_request, parse_event_stream_full, parse_event_stream, is_quota_exceeded_error
+from ..kiro_api import build_headers, build_kiro_request, build_request_params, parse_event_stream_full, parse_event_stream, is_quota_exceeded_error
 from ..converters import (
     generate_session_id,
     convert_anthropic_tools_to_kiro,
@@ -98,11 +98,27 @@ async def handle_count_tokens(request: Request):
     return {"input_tokens": _count_tokens_from_messages(messages, system)}
 
 
-async def _call_kiro_for_summary(prompt: str, account, headers: dict) -> str:
+def _build_account_request_context(account):
+    token = account.get_token()
+    creds = account.get_credentials()
+    headers = build_headers(
+        token,
+        machine_id=account.get_machine_id(),
+        profile_arn=creds.profile_arn if creds else None,
+        client_id=creds.client_id if creds else None,
+    )
+    request_params = build_request_params(
+        auth_method=creds.auth_method if creds else "social",
+        profile_arn=creds.profile_arn if creds else None,
+    )
+    return headers, request_params
+
+
+async def _call_kiro_for_summary(prompt: str, account, headers: dict, request_params: dict) -> str:
     """调用 Kiro API 生成摘要（内部使用）"""
     kiro_request = build_kiro_request(prompt, "claude-haiku-4.5", [])  # 用快速模型生成摘要
     try:
-        resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, timeout=60, verify=False)
+        resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, params=request_params, timeout=60, verify=False)
         if resp.status_code == 200:
             return parse_event_stream(resp.content)
     except Exception as e:
@@ -158,13 +174,7 @@ async def handle_messages(request: Request):
         raise HTTPException(500, f"Failed to get token for account {account.name}")
     
     # 使用账号的动态 Machine ID（提前构建，供摘要使用）
-    creds = account.get_credentials()
-    headers = build_headers(
-        token,
-        machine_id=account.get_machine_id(),
-        profile_arn=creds.profile_arn if creds else None,
-        client_id=creds.client_id if creds else None
-    )
+    headers, request_params = _build_account_request_context(account)
     
     # 限速检查
     rate_limiter = get_rate_limiter()
@@ -181,7 +191,7 @@ async def handle_messages(request: Request):
     
     # 检查是否需要智能摘要或错误重试预摘要
     async def api_caller(prompt: str) -> str:
-        return await _call_kiro_for_summary(prompt, account, headers)
+        return await _call_kiro_for_summary(prompt, account, headers, request_params)
     if history_manager.should_summarize(history) or history_manager.should_pre_summary_for_error_retry(history, user_content):
         history = await history_manager.pre_process_async(history, user_content, api_caller)
     else:
@@ -206,12 +216,12 @@ async def handle_messages(request: Request):
     kiro_request = build_kiro_request(user_content, model, history, kiro_tools, images, tool_results)
     
     if stream:
-        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
+        return await _handle_stream(kiro_request, headers, request_params, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
     else:
-        return await _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
+        return await _handle_non_stream(kiro_request, headers, request_params, account, model, log_id, start_time, session_id, flow_id, history, user_content, kiro_tools, images, tool_results, history_manager)
 
 
-async def _handle_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
+async def _handle_stream(kiro_request, headers, request_params, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
     """Handle streaming responses with auto-retry on quota exceeded and network errors."""
     
     async def generate():
@@ -224,7 +234,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
         while retry_count <= max_retries:
             try:
                 async with httpx.AsyncClient(verify=False, timeout=300) as client:
-                    async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers) as response:
+                    async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers, params=request_params) as response:
                         
                         # 处理配额超限
                         if response.status_code == 429 or is_quota_exceeded_error(response.status_code, ""):
@@ -235,8 +245,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                             if next_account and retry_count < max_retries:
                                 print(f"[Stream] 配额超限，切换账号: {current_account.id} -> {next_account.id}")
                                 current_account = next_account
-                                token = current_account.get_token()
-                                headers["Authorization"] = f"Bearer {token}"
+                                headers, request_params = _build_account_request_context(current_account)
                                 retry_count += 1
                                 continue
                             
@@ -300,7 +309,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                                 if next_account and retry_count < max_retries:
                                     print(f"[Stream] 切换账号: {current_account.id} -> {next_account.id}")
                                     current_account = next_account
-                                    headers["Authorization"] = f"Bearer {current_account.get_token()}"
+                                    headers, request_params = _build_account_request_context(current_account)
                                     retry_count += 1
                                     continue
                             
@@ -311,7 +320,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
                                 )
                                 print(f"[Stream] 内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
                                 async def api_caller(prompt: str) -> str:
-                                    return await _call_kiro_for_summary(prompt, current_account, headers)
+                                    return await _call_kiro_for_summary(prompt, current_account, headers, request_params)
                                 truncated_history, should_retry = await history_manager.handle_length_error_async(
                                     history, retry_count, api_caller
                                 )
@@ -444,7 +453,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _handle_non_stream(kiro_request, headers, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
+async def _handle_non_stream(kiro_request, headers, request_params, account, model, log_id, start_time, session_id=None, flow_id=None, history=None, user_content="", kiro_tools=None, images=None, tool_results=None, history_manager=None):
     """Handle non-streaming responses with auto-retry on quota exceeded and network errors."""
     error_msg = None
     status_code = 200
@@ -454,7 +463,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
 
     for retry in range(max_retries + 1):
         try:
-            response = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, timeout=300, verify=False)
+            response = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, params=request_params, timeout=300, verify=False)
             status_code = response.status_code
 
             # 处理配额超限
@@ -466,8 +475,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                 if next_account and retry < max_retries:
                     print(f"[NonStream] 配额超限，切换账号: {current_account.id} -> {next_account.id}")
                     current_account = next_account
-                    token = current_account.get_token()
-                    headers["Authorization"] = f"Bearer {token}"
+                    headers, request_params = _build_account_request_context(current_account)
                     continue
 
                 if flow_id:
@@ -499,7 +507,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     if next_account and retry < max_retries:
                         print(f"[NonStream] 切换账号: {current_account.id} -> {next_account.id}")
                         current_account = next_account
-                        headers["Authorization"] = f"Bearer {current_account.get_token()}"
+                        headers, request_params = _build_account_request_context(current_account)
                         continue
 
                 # 检查是否为内容长度超限错误，尝试截断重试
@@ -510,7 +518,7 @@ async def _handle_non_stream(kiro_request, headers, account, model, log_id, star
                     print(f"[NonStream] 内容长度超限: history={history_chars} chars, user={user_chars} chars, total={total_chars} chars")
 
                     async def api_caller(prompt: str) -> str:
-                        return await _call_kiro_for_summary(prompt, current_account, headers)
+                        return await _call_kiro_for_summary(prompt, current_account, headers, request_params)
 
                     truncated_history, should_retry = await history_manager.handle_length_error_async(
                         history, retry, api_caller

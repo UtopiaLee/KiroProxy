@@ -13,7 +13,7 @@ from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config, is_content_length_error
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
-from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, parse_event_stream_full, is_quota_exceeded_error
+from ..kiro_api import build_headers, build_kiro_request, build_request_params, parse_event_stream, parse_event_stream_full, is_quota_exceeded_error
 from ..converters import generate_session_id, convert_openai_messages_to_kiro, extract_images_from_content, convert_kiro_response_to_openai
 
 
@@ -73,6 +73,10 @@ async def handle_chat_completions(request: Request):
         profile_arn=creds.profile_arn if creds else None,
         client_id=creds.client_id if creds else None
     )
+    request_params = build_request_params(
+        auth_method=creds.auth_method if creds else "social",
+        profile_arn=creds.profile_arn if creds else None,
+    )
     
     # 限速检查
     rate_limiter = get_rate_limiter()
@@ -92,7 +96,7 @@ async def handle_chat_completions(request: Request):
     async def call_summary(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            resp = await http_post(KIRO_API_URL, json=req, headers=headers, timeout=60, verify=False)
+            resp = await http_post(KIRO_API_URL, json=req, headers=headers, params=request_params, timeout=60, verify=False)
             if resp.status_code == 200:
                 return parse_event_stream(resp.content)
         except Exception as e:
@@ -137,7 +141,7 @@ async def handle_chat_completions(request: Request):
     
     for retry in range(max_retries + 1):
         try:
-            resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, timeout=120, verify=False)
+            resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, params=request_params, timeout=120, verify=False)
             status_code = resp.status_code
                 
             # 处理配额超限
@@ -156,6 +160,10 @@ async def handle_chat_completions(request: Request):
                         machine_id=current_account.get_machine_id(),
                         profile_arn=creds.profile_arn if creds else None,
                         client_id=creds.client_id if creds else None
+                    )
+                    request_params = build_request_params(
+                        auth_method=creds.auth_method if creds else "social",
+                        profile_arn=creds.profile_arn if creds else None,
                     )
                     continue
                 
@@ -194,7 +202,18 @@ async def handle_chat_completions(request: Request):
                     if next_account and retry < max_retries:
                         print(f"[OpenAI] 切换账号: {current_account.id} -> {next_account.id}")
                         current_account = next_account
-                        headers["Authorization"] = f"Bearer {current_account.get_token()}"
+                        token = current_account.get_token()
+                        creds = current_account.get_credentials()
+                        headers = build_headers(
+                            token,
+                            machine_id=current_account.get_machine_id(),
+                            profile_arn=creds.profile_arn if creds else None,
+                            client_id=creds.client_id if creds else None,
+                        )
+                        request_params = build_request_params(
+                            auth_method=creds.auth_method if creds else "social",
+                            profile_arn=creds.profile_arn if creds else None,
+                        )
                         continue
                 
                 # 检查是否为内容长度超限错误，尝试截断重试

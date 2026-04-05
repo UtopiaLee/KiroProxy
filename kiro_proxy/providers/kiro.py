@@ -65,6 +65,25 @@ class KiroProvider(BaseProvider):
             "Authorization": f"Bearer {token}",
             "Connection": "close",
         }
+
+    def build_request_params(
+        self,
+        auth_method: str = "social",
+        profile_arn: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, str]:
+        """构建 Kiro API 查询参数。
+
+        `generateAssistantResponse` 与若干管理接口一样，要求带上 origin。
+        对 social 账号还需要补充 profileArn，AWS 才能解析到具体登录身份；
+        否则会返回 `auth_unavailable: no auth available`。
+        """
+        params = {
+            "origin": "AI_EDITOR",
+        }
+        if auth_method == "social" and profile_arn:
+            params["profileArn"] = profile_arn
+        return params
     
     def build_request(
         self,

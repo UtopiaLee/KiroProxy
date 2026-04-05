@@ -28,6 +28,17 @@ def build_headers(
     return _default_provider.build_headers(token, agent_mode)
 
 
+def build_request_params(
+    auth_method: str = "social",
+    profile_arn: str = None,
+) -> dict:
+    """构建 Kiro API 查询参数。"""
+    return _default_provider.build_request_params(
+        auth_method=auth_method,
+        profile_arn=profile_arn,
+    )
+
+
 def build_kiro_request(
     user_content: str,
     model: str,

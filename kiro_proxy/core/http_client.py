@@ -78,13 +78,21 @@ async def run_blocking(func):
             _reset_executor(executor)
 
 
-async def http_post(url: str, *, json: Any = None, headers: Optional[dict] = None, timeout: float = 30, verify: bool = False) -> HttpResult:
+async def http_post(
+    url: str,
+    *,
+    json: Any = None,
+    headers: Optional[dict] = None,
+    params: Optional[dict] = None,
+    timeout: float = 30,
+    verify: bool = False,
+) -> HttpResult:
     """在线程池里执行同步 POST。"""
 
     def _do_post() -> HttpResult:
         start = time.time()
         with httpx.Client(timeout=timeout, verify=verify) as client:
-            resp = client.post(url, json=json, headers=headers)
+            resp = client.post(url, json=json, headers=headers, params=params)
             return HttpResult(
                 status_code=resp.status_code,
                 text=resp.text,

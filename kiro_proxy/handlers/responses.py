@@ -16,7 +16,7 @@ from ..core.state import RequestLog
 from ..core.history_manager import HistoryManager, get_history_config
 from ..core.error_handler import classify_error, ErrorType, format_error_log
 from ..core.rate_limiter import get_rate_limiter
-from ..kiro_api import build_headers, build_kiro_request, parse_event_stream, parse_event_stream_full, is_quota_exceeded_error
+from ..kiro_api import build_headers, build_kiro_request, build_request_params, parse_event_stream, parse_event_stream_full, is_quota_exceeded_error
 
 
 def _convert_responses_input_to_kiro(input_data, instructions: str = None):
@@ -386,6 +386,10 @@ async def handle_responses(request: Request):
         profile_arn=creds.profile_arn if creds else None,
         client_id=creds.client_id if creds else None
     )
+    request_params = build_request_params(
+        auth_method=creds.auth_method if creds else "social",
+        profile_arn=creds.profile_arn if creds else None,
+    )
     
     rate_limiter = get_rate_limiter()
     can_request, wait_seconds, _ = rate_limiter.can_request(account.id)
@@ -409,7 +413,7 @@ async def handle_responses(request: Request):
     async def api_caller(prompt: str) -> str:
         req = build_kiro_request(prompt, "claude-haiku-4.5", [])
         try:
-            resp = await http_post(KIRO_API_URL, json=req, headers=headers, timeout=60, verify=False)
+            resp = await http_post(KIRO_API_URL, json=req, headers=headers, params=request_params, timeout=60, verify=False)
             if resp.status_code == 200:
                 return parse_event_stream(resp.content)
         except Exception as e:
@@ -511,10 +515,10 @@ async def handle_responses(request: Request):
         print(f"[Responses] Kiro request structure: {json.dumps(debug_request, indent=2)}")
     
     if stream:
-        return await _handle_stream(kiro_request, headers, account, model, log_id, start_time)
+        return await _handle_stream(kiro_request, headers, request_params, account, model, log_id, start_time)
     
     # 非流式
-    resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, timeout=120, verify=False)
+    resp = await http_post(KIRO_API_URL, json=kiro_request, headers=headers, params=request_params, timeout=120, verify=False)
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, resp.text)
     
@@ -559,7 +563,7 @@ def _build_response(result: dict, model: str, response_id: str) -> dict:
     }
 
 
-async def _handle_stream(kiro_request, headers, account, model, log_id, start_time):
+async def _handle_stream(kiro_request, headers, request_params, account, model, log_id, start_time):
     """流式处理 - Codex 期望的 SSE 格式"""
     
     # 保存完整请求用于调试
@@ -583,7 +587,7 @@ async def _handle_stream(kiro_request, headers, account, model, log_id, start_ti
         
         try:
             async with httpx.AsyncClient(verify=False, timeout=300) as client:
-                async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers) as response:
+                async with client.stream("POST", KIRO_API_URL, json=kiro_request, headers=headers, params=request_params) as response:
                     
                     if response.status_code != 200:
                         error_text = await response.aread()
