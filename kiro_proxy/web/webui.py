@@ -56,6 +56,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
 button.small { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 select { padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
+textarea { padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 0.95rem; }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.8rem; }
 table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
@@ -309,9 +310,10 @@ HTML_API = '''
 <div class="panel" id="api">
   <div class="card">
     <h3>API 端点</h3>
-    <p style="color:var(--muted);font-size:0.875rem;margin-bottom:1rem">支持 OpenAI、Anthropic、Gemini 三种协议</p>
+    <p style="color:var(--muted);font-size:0.875rem;margin-bottom:1rem">支持 OpenAI、Anthropic、Gemini 三种协议，所有 V1 接口都需要携带 API Key</p>
     <h4 style="color:var(--muted);margin-bottom:0.5rem">OpenAI 协议</h4>
     <div class="endpoint"><span class="method post">POST</span><code>/v1/chat/completions</code></div>
+    <div class="endpoint"><span class="method post">POST</span><code>/v1/responses</code></div>
     <div class="endpoint"><span class="method get">GET</span><code>/v1/models</code></div>
     <h4 style="color:var(--muted);margin-top:1rem;margin-bottom:0.5rem">Anthropic 协议</h4>
     <div class="endpoint"><span class="method post">POST</span><code>/v1/messages</code></div>
@@ -321,16 +323,19 @@ HTML_API = '''
     <h4 style="margin-top:1rem;color:var(--muted)">Base URL</h4>
     <pre><code id="baseUrl"></code></pre>
     <button class="copy-btn" onclick="copy(location.origin)" style="margin-top:0.5rem">复制</button>
+    <h4 style="margin-top:1rem;color:var(--muted)">鉴权方式</h4>
+    <pre><code>方式 1: Authorization: Bearer &lt;你的 API Key&gt;
+方式 2: x-api-key: &lt;你的 API Key&gt;</code></pre>
   </div>
   <div class="card">
     <h3>配置示例</h3>
     <h4 style="color:var(--muted);margin-bottom:0.5rem">Claude Code</h4>
     <pre><code>Base URL: <span class="pyUrl"></span>
-API Key: any
+API Key: 你在设置页配置的 API Key
 模型: claude-sonnet-4</code></pre>
     <h4 style="color:var(--muted);margin-top:1rem;margin-bottom:0.5rem">Codex CLI</h4>
     <pre><code>Endpoint: <span class="pyUrl"></span>/v1
-API Key: any
+API Key: 你在设置页配置的 API Key
 模型: gpt-4o</code></pre>
   </div>
   <div class="card">
@@ -339,7 +344,7 @@ API Key: any
     
     <h4 style="color:var(--muted);margin-bottom:0.5rem">临时生效（当前终端）</h4>
     <pre id="envTempCmd"><code>export ANTHROPIC_BASE_URL="<span class="pyUrl"></span>"
-export ANTHROPIC_AUTH_TOKEN="sk-any"
+export ANTHROPIC_AUTH_TOKEN="&lt;你的 API Key&gt;"
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code></pre>
     <button class="copy-btn" onclick="copyEnvTemp()" style="margin-top:0.5rem">复制命令</button>
     
@@ -350,7 +355,7 @@ cat > ~/.claude/settings.json << 'EOF'
 {
   "env": {
     "ANTHROPIC_BASE_URL": "<span class="pyUrl"></span>",
-    "ANTHROPIC_AUTH_TOKEN": "sk-any",
+    "ANTHROPIC_AUTH_TOKEN": "<你的 API Key>",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   }
 }
@@ -389,6 +394,34 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_DISABLE_NONESSENTIAL_T
 
 HTML_SETTINGS = '''
 <div class="panel" id="settings">
+  <div class="card">
+    <h3>V1 API Key <button class="secondary small" onclick="loadApiKeyConfig()">刷新</button></h3>
+    <p style="color:var(--muted);font-size:0.875rem;margin-bottom:1rem">
+      对外提供的 <code>/v1/*</code> 和 <code>/v1beta/*</code> 接口必须携带 API Key 才能访问。
+    </p>
+    <div id="apiKeyStatusBox" style="padding:0.75rem;background:var(--bg);border-radius:6px;margin-bottom:1rem;font-size:0.875rem;color:var(--muted)">加载中...</div>
+    <div style="display:grid;grid-template-columns:1fr;gap:0.75rem">
+      <div>
+        <label style="display:block;font-size:0.875rem;color:var(--muted);margin-bottom:0.25rem">自定义 API Key</label>
+        <input type="text" id="apiKeyInput" placeholder="输入自定义 API Key，至少 8 位" style="width:100%;padding:0.75rem 1rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text)">
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button onclick="saveApiKey()">保存 API Key</button>
+        <button class="secondary" onclick="generateApiKey()">自动生成</button>
+        <button class="secondary" onclick="clearApiKey()">清除 API Key</button>
+      </div>
+      <div id="apiKeyMessage" style="font-size:0.875rem;min-height:1.25rem"></div>
+      <div id="apiKeyResultBox" style="display:none;padding:0.75rem;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
+        <div style="font-size:0.875rem;font-weight:600;margin-bottom:0.5rem">当前生成/保存的 API Key</div>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+          <textarea id="apiKeyResult" readonly style="display:block;word-break:break-all;flex:1;min-height:72px;resize:vertical;font-family:monospace" onclick="this.select()"></textarea>
+          <button class="secondary small" onclick="copyGeneratedApiKey()">复制</button>
+        </div>
+        <div style="font-size:0.75rem;color:var(--warn);margin-top:0.5rem">注意：出于安全原因，页面只会在保存/生成成功后显示一次完整 API Key，请及时复制保存。</div>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <h3>服务端口</h3>
     <p style="color:var(--muted);font-size:0.875rem;margin-bottom:1rem">
@@ -542,20 +575,64 @@ JS_UTILS = '''
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
 
+const __nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const response = await __nativeFetch(...args);
+  const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+  if (
+    response.status === 401 &&
+    !url.includes('/api/admin/auth/login') &&
+    !url.includes('/api/admin/auth/setup') &&
+    !url.includes('/api/admin/auth/status')
+  ) {
+    location.href = '/';
+  }
+  return response;
+};
+
 function copy(text){
-  navigator.clipboard.writeText(text).then(()=>{
+  const showToast=(message)=>{
     const toast=document.createElement('div');
-    toast.textContent=_('common.copied');
+    toast.textContent=message;
     toast.style.cssText='position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);background:var(--accent);color:var(--bg);padding:0.5rem 1rem;border-radius:6px;font-size:0.875rem;z-index:1000';
     document.body.appendChild(toast);
     setTimeout(()=>toast.remove(),1500);
-  });
+  };
+
+  const fallbackCopy=()=>{
+    const textarea=document.createElement('textarea');
+    textarea.value=text;
+    textarea.setAttribute('readonly','readonly');
+    textarea.style.position='fixed';
+    textarea.style.opacity='0';
+    textarea.style.pointerEvents='none';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    let copied=false;
+    try{copied=document.execCommand('copy');}catch(e){copied=false;}
+    textarea.remove();
+    if(copied){
+      showToast(_('common.copied'));
+    }else{
+      alert('复制失败，请手动选择并复制');
+    }
+  };
+
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(text)
+      .then(()=>showToast(_('common.copied')))
+      .catch(()=>fallbackCopy());
+  }else{
+    fallbackCopy();
+  }
 }
 
 function copyEnvTemp(){
   const url=location.origin;
   copy(`export ANTHROPIC_BASE_URL="${url}"
-export ANTHROPIC_AUTH_TOKEN="sk-any"
+export ANTHROPIC_AUTH_TOKEN="<你的 API Key>"
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`);
 }
 
@@ -567,7 +644,7 @@ cat > ~/.claude/settings.json << 'EOF'
 {
   "env": {
     "ANTHROPIC_BASE_URL": "${url}",
-    "ANTHROPIC_AUTH_TOKEN": "sk-any",
+    "ANTHROPIC_AUTH_TOKEN": "<你的 API Key>",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   }
 }
@@ -1355,6 +1432,107 @@ async function exportFlows(){
 JS_SETTINGS = '''
 // 设置页面
 
+let latestGeneratedApiKey='';
+
+function showApiKeyMessage(message, type='info'){
+  const el=$('#apiKeyMessage');
+  if(!el)return;
+  el.textContent=message||'';
+  el.style.color=type==='error'?'var(--error)':type==='success'?'var(--success)':'var(--muted)';
+}
+
+function renderApiKeyStatus(data){
+  const statusEl=$('#apiKeyStatusBox');
+  if(!statusEl)return;
+  if(!data.configured){
+    statusEl.innerHTML='状态：<span class="badge warn">未配置</span><br>当前未设置 API Key，所有 V1 接口会直接拒绝访问。';
+  }else{
+    const updatedAt=data.updated_at?new Date(data.updated_at*1000).toLocaleString():'-';
+    statusEl.innerHTML=`状态：<span class="badge success">已配置</span><br>请求头：<code>${data.header||'x-api-key'}</code><br>Key 预览：<code>${data.key_preview||'-'}</code><br>更新时间：${updatedAt}`;
+  }
+}
+
+function showApiKeyResult(apiKey){
+  latestGeneratedApiKey=apiKey||'';
+  const box=$('#apiKeyResultBox');
+  const result=$('#apiKeyResult');
+  if(!box||!result)return;
+  if(apiKey){
+    result.value=apiKey;
+    box.style.display='block';
+    setTimeout(()=>{
+      result.focus();
+      result.select();
+    },0);
+  }else{
+    result.value='';
+    box.style.display='none';
+  }
+}
+
+function copyGeneratedApiKey(){
+  if(latestGeneratedApiKey)copy(latestGeneratedApiKey);
+}
+
+async function loadApiKeyConfig(){
+  try{
+    const r=await fetch('/api/settings/api-key');
+    const d=await r.json();
+    renderApiKeyStatus(d);
+  }catch(e){
+    $('#apiKeyStatusBox').innerHTML='<span style="color:var(--error)">加载 API Key 状态失败：'+escapeHtml(e.message)+'</span>';
+  }
+}
+
+async function saveApiKey(){
+  const apiKey=$('#apiKeyInput').value.trim();
+  if(!apiKey){showApiKeyMessage('请输入 API Key','error');return;}
+  showApiKeyMessage('保存中...');
+  try{
+    const r=await fetch('/api/settings/api-key',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({api_key:apiKey})
+    });
+    const d=await r.json();
+    if(!r.ok){showApiKeyMessage(d.detail||'保存失败','error');return;}
+    showApiKeyMessage(d.message||'保存成功','success');
+    showApiKeyResult(d.api_key||apiKey);
+    $('#apiKeyInput').value='';
+    renderApiKeyStatus(d);
+  }catch(e){showApiKeyMessage('保存失败：'+e.message,'error');}
+}
+
+async function generateApiKey(){
+  showApiKeyMessage('生成中...');
+  try{
+    const r=await fetch('/api/settings/api-key',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({auto_generate:true})
+    });
+    const d=await r.json();
+    if(!r.ok){showApiKeyMessage(d.detail||'生成失败','error');return;}
+    showApiKeyMessage(d.message||'生成成功','success');
+    showApiKeyResult(d.api_key||'');
+    $('#apiKeyInput').value='';
+    renderApiKeyStatus(d);
+  }catch(e){showApiKeyMessage('生成失败：'+e.message,'error');}
+}
+
+async function clearApiKey(){
+  if(!confirm('确定要清除当前 API Key 吗？清除后所有 V1 接口会不可用，直到重新设置。'))return;
+  showApiKeyMessage('清除中...');
+  try{
+    const r=await fetch('/api/settings/api-key',{method:'DELETE'});
+    const d=await r.json();
+    if(!r.ok){showApiKeyMessage(d.detail||'清除失败','error');return;}
+    showApiKeyMessage(d.message||'已清除','success');
+    showApiKeyResult('');
+    renderApiKeyStatus(d);
+  }catch(e){showApiKeyMessage('清除失败：'+e.message,'error');}
+}
+
 // 策略警告信息 - 使用 i18n
 function getStrategyWarnings() {
   return {
@@ -1487,6 +1665,7 @@ async function updateRateLimitConfig(){
 }
 
 // 页面加载时加载设置
+loadApiKeyConfig();
 loadHistoryConfig();
 loadRateLimitConfig();
 '''
@@ -1810,4 +1989,202 @@ HTML_PAGE = get_html_page() if False else f'''<!DOCTYPE html>
 </script>
 </body>
 </html>'''
+
+
+def get_login_page() -> str:
+    """后台登录页"""
+    auth_styles = CSS_STYLES + '''
+.auth-shell { min-height: 100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem; }
+.auth-card { width:min(420px, 100%); background:var(--card); border:1px solid var(--border); border-radius:12px; padding:2rem; box-shadow:0 10px 30px rgba(0,0,0,0.08); }
+.auth-title { display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem; font-size:1.35rem; font-weight:600; }
+.auth-title img { width:32px; height:32px; }
+.auth-desc { color:var(--muted); font-size:0.9rem; margin-bottom:1.5rem; }
+.auth-form { display:flex; flex-direction:column; gap:0.9rem; }
+.auth-form label { font-size:0.875rem; color:var(--muted); margin-bottom:0.25rem; display:block; }
+.auth-form input { width:100%; padding:0.85rem 1rem; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--text); font-size:0.95rem; }
+.auth-actions { display:flex; gap:0.75rem; align-items:center; }
+.auth-actions button { flex:1; }
+.auth-message { min-height:1.25rem; font-size:0.875rem; }
+.auth-message.error { color:var(--error); }
+.auth-message.success { color:var(--success); }
+.auth-tip { margin-top:1rem; color:var(--muted); font-size:0.8rem; line-height:1.6; }
+.auth-switch { margin-top:0.75rem; font-size:0.85rem; color:var(--muted); }
+.auth-switch a { color:var(--info); text-decoration:none; cursor:pointer; }
+.auth-switch a:hover { text-decoration:underline; }
+'''
+
+    return f'''<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiro API - 后台登录</title>
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<style>
+{auth_styles}
+</style>
+</head>
+<body>
+<div class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-title"><img src="/assets/icon.svg" alt="Kiro">Kiro API Proxy</div>
+    <div class="auth-desc" id="authDesc">加载中...</div>
+
+    <form class="auth-form" id="setupForm" style="display:none">
+      <div>
+        <label for="setupPassword">设置后台密码</label>
+        <input id="setupPassword" type="password" autocomplete="new-password" placeholder="请输入后台密码">
+      </div>
+      <div>
+        <label for="setupConfirmPassword">确认后台密码</label>
+        <input id="setupConfirmPassword" type="password" autocomplete="new-password" placeholder="请再次输入后台密码">
+      </div>
+      <div class="auth-actions">
+        <button type="submit">初始化并进入后台</button>
+      </div>
+      <div class="auth-tip" id="setupTip"></div>
+    </form>
+
+    <form class="auth-form" id="loginForm" style="display:none">
+      <div>
+        <label for="loginPassword">后台密码</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="请输入后台密码">
+      </div>
+      <div class="auth-actions">
+        <button type="submit">登录后台</button>
+      </div>
+    </form>
+
+    <div class="auth-message" id="authMessage"></div>
+    <div class="auth-switch" id="authSwitch"></div>
+  </div>
+</div>
+
+<script>
+const $ = (selector) => document.querySelector(selector);
+const authMessage = $('#authMessage');
+let authStatus = null;
+
+function showMessage(message, type = '') {{
+  authMessage.textContent = message || '';
+  authMessage.className = 'auth-message' + (type ? ' ' + type : '');
+}}
+
+function setLoading(button, loadingText, restoreText) {{
+  if (!button) return () => {{}};
+  button.disabled = true;
+  const originalText = restoreText || button.textContent;
+  button.textContent = loadingText;
+  return () => {{
+    button.disabled = false;
+    button.textContent = originalText;
+  }};
+}}
+
+function renderAuthView(status) {{
+  authStatus = status;
+  if (status.authenticated) {{
+    location.reload();
+    return;
+  }}
+
+  if (status.password_configured) {{
+    $('#authDesc').textContent = '请输入后台密码，未登录无法进入管理后台。';
+    $('#setupForm').style.display = 'none';
+    $('#loginForm').style.display = 'flex';
+    $('#authSwitch').innerHTML = '';
+    $('#loginPassword').focus();
+  }} else {{
+    $('#authDesc').textContent = '首次使用请先初始化后台密码，之后访问后台必须先登录。';
+    $('#setupForm').style.display = 'flex';
+    $('#loginForm').style.display = 'none';
+    $('#setupTip').textContent = '密码至少 ' + status.password_min_length + ' 位，请妥善保管。';
+    $('#authSwitch').innerHTML = '';
+    $('#setupPassword').focus();
+  }}
+}}
+
+async function loadAuthStatus() {{
+  try {{
+    const response = await fetch('/api/admin/auth/status');
+    const data = await response.json();
+    renderAuthView(data);
+  }} catch (error) {{
+    showMessage('加载登录状态失败：' + error.message, 'error');
+  }}
+}}
+
+$('#setupForm').addEventListener('submit', async (event) => {{
+  event.preventDefault();
+  const password = $('#setupPassword').value.trim();
+  const confirmPassword = $('#setupConfirmPassword').value.trim();
+  if (!password || !confirmPassword) {{
+    showMessage('请完整输入密码和确认密码', 'error');
+    return;
+  }}
+  if (password !== confirmPassword) {{
+    showMessage('两次输入的密码不一致', 'error');
+    return;
+  }}
+
+  const restore = setLoading($('#setupForm button'), '初始化中...');
+  showMessage('');
+  try {{
+    const response = await fetch('/api/admin/auth/setup', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ password, confirm_password: confirmPassword }})
+    }});
+    const data = await response.json();
+    if (!response.ok) {{
+      showMessage(data.detail || '初始化失败', 'error');
+      return;
+    }}
+    showMessage(data.message || '初始化成功，正在进入后台...', 'success');
+    setTimeout(() => location.reload(), 300);
+  }} catch (error) {{
+    showMessage('初始化失败：' + error.message, 'error');
+  }} finally {{
+    restore();
+  }}
+}});
+
+$('#loginForm').addEventListener('submit', async (event) => {{
+  event.preventDefault();
+  const password = $('#loginPassword').value.trim();
+  if (!password) {{
+    showMessage('请输入后台密码', 'error');
+    return;
+  }}
+
+  const restore = setLoading($('#loginForm button'), '登录中...');
+  showMessage('');
+  try {{
+    const response = await fetch('/api/admin/auth/login', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ password }})
+    }});
+    const data = await response.json();
+    if (!response.ok) {{
+      showMessage(data.detail || '登录失败', 'error');
+      return;
+    }}
+    showMessage(data.message || '登录成功，正在进入后台...', 'success');
+    setTimeout(() => location.reload(), 300);
+  }} catch (error) {{
+    showMessage('登录失败：' + error.message, 'error');
+  }} finally {{
+    restore();
+  }}
+}});
+
+loadAuthStatus();
+</script>
+</body>
+</html>'''
+
+
+
+
 

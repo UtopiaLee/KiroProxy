@@ -30,7 +30,8 @@ def _load_webui_module():
 
 
 try:
-    from .webui import get_html_page
+    from .webui import get_html_page, get_login_page
 except Exception:
     _webui = _load_webui_module()
     get_html_page = _webui.get_html_page
+    get_login_page = _webui.get_login_page

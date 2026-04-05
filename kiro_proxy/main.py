@@ -11,9 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import MODELS_URL
 from .core import state, scheduler, stats_manager
+from .core.admin_auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, is_authenticated
+from .core.api_key_auth import extract_api_key, is_api_key_configured, verify_api_key
 from .handlers import anthropic, openai, gemini, admin
 from .handlers import responses as responses_handler
-from .web import get_html_page
+from .web import get_html_page, get_login_page
 from .credential import generate_machine_id, get_kiro_version
 
 
@@ -58,11 +60,86 @@ app.add_middleware(
 )
 
 
+AUTH_EXEMPT_PATHS = {
+    "/api/status",
+    "/api/admin/auth/status",
+    "/api/admin/auth/setup",
+    "/api/admin/auth/login",
+    "/api/admin/auth/logout",
+    "/remote-login",
+}
+
+
+def _is_protected_admin_path(path: str) -> bool:
+    """判断是否为需要后台鉴权的管理路径"""
+    if path == "/docs" or path.startswith("/docs/") or path == "/openapi.json":
+        return True
+
+    if not path.startswith("/api/"):
+        return False
+
+    for exempt_path in AUTH_EXEMPT_PATHS:
+        if path == exempt_path or path.startswith(exempt_path + "/"):
+            return False
+
+    return True
+
+
+def _is_v1_api_path(path: str) -> bool:
+    """判断是否为需要 API Key 的对外接口"""
+    return path == "/v1/models" or path.startswith("/v1/") or path.startswith("/v1beta/")
+
+
+@app.middleware("http")
+async def admin_auth_middleware(request: Request, call_next):
+    """管理后台鉴权中间件"""
+    if request.method != "OPTIONS" and _is_protected_admin_path(request.url.path):
+        if not is_authenticated(request):
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "detail": "请先登录后台"}
+            )
+
+    if request.method != "OPTIONS" and _is_v1_api_path(request.url.path):
+        if not is_api_key_configured():
+            return JSONResponse(
+                status_code=503,
+                content={"ok": False, "detail": "服务端尚未配置 V1 API Key"}
+            )
+
+        api_key = extract_api_key(request)
+        if not verify_api_key(api_key):
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "detail": "无效的 API Key"}
+            )
+
+    return await call_next(request)
+
+
+def _build_auth_response(payload: dict) -> JSONResponse:
+    """构建登录响应并写入会话 Cookie"""
+    session_id = payload.pop("session_id", None)
+    response = JSONResponse(payload)
+    if session_id:
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_id,
+            max_age=SESSION_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+    return response
+
+
 # ==================== Web UI ====================
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    return get_html_page()
+async def index(request: Request):
+    if is_authenticated(request):
+        return get_html_page()
+    return get_login_page()
 
 
 @app.get("/assets/{path:path}")
@@ -159,6 +236,53 @@ async def gemini_generate(model_name: str, request: Request):
 @app.get("/api/status")
 async def api_status():
     return await admin.get_status()
+
+
+@app.get("/api/admin/auth/status")
+async def api_admin_auth_status(request: Request):
+    """获取后台登录状态"""
+    return await admin.get_admin_auth_status(request)
+
+
+@app.post("/api/admin/auth/setup")
+async def api_admin_auth_setup(request: Request):
+    """初始化后台密码"""
+    result = await admin.setup_admin_auth(request)
+    return _build_auth_response(result)
+
+
+@app.post("/api/admin/auth/login")
+async def api_admin_auth_login(request: Request):
+    """后台登录"""
+    result = await admin.login_admin(request)
+    return _build_auth_response(result)
+
+
+@app.post("/api/admin/auth/logout")
+async def api_admin_auth_logout(request: Request):
+    """后台退出登录"""
+    result = await admin.logout_admin(request)
+    response = JSONResponse(result)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/settings/api-key")
+async def api_get_v1_api_key_status():
+    """获取 V1 API Key 状态"""
+    return await admin.get_v1_api_key_status()
+
+
+@app.post("/api/settings/api-key")
+async def api_update_v1_api_key(request: Request):
+    """设置 V1 API Key"""
+    return await admin.update_v1_api_key(request)
+
+
+@app.delete("/api/settings/api-key")
+async def api_delete_v1_api_key():
+    """清除 V1 API Key"""
+    return await admin.delete_v1_api_key()
 
 @app.post("/api/event_logging/batch")
 async def api_event_logging_batch(request: Request):

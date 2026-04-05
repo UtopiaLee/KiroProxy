@@ -10,6 +10,22 @@ from fastapi import Request, HTTPException, Query
 
 from ..config import TOKEN_PATH, MODELS_URL
 from ..core import state, Account, stats_manager, get_browsers_info, open_url, flow_monitor, get_account_usage
+from ..core.admin_auth import (
+    MIN_PASSWORD_LENGTH,
+    create_session,
+    get_session_id,
+    invalidate_session,
+    is_authenticated,
+    is_password_configured,
+    set_admin_password,
+    verify_admin_password,
+)
+from ..core.api_key_auth import (
+    clear_api_key,
+    generate_api_key,
+    get_api_key_status,
+    set_api_key,
+)
 from ..credential import quota_manager, generate_machine_id, get_kiro_version, CredentialStatus
 from ..auth import start_device_flow, poll_device_flow, cancel_device_flow, get_login_state, save_credentials_to_file
 from ..auth import start_social_auth, exchange_social_auth_token, cancel_social_auth, get_social_auth_state
@@ -27,6 +43,119 @@ async def get_status():
         "has_available_accounts": has_available,
         "port": state.current_port,
         "stats": stats
+    }
+
+
+async def get_admin_auth_status(request: Request):
+    """获取后台登录状态"""
+    return {
+        "ok": True,
+        "authenticated": is_authenticated(request),
+        "password_configured": is_password_configured(),
+        "password_min_length": MIN_PASSWORD_LENGTH,
+    }
+
+
+async def setup_admin_auth(request: Request):
+    """首次设置后台密码"""
+    if is_password_configured():
+        raise HTTPException(400, "后台密码已设置")
+
+    body = await request.json()
+    password = (body.get("password") or "").strip()
+    confirm_password = (body.get("confirm_password") or "").strip()
+
+    if not password:
+        raise HTTPException(400, "请输入后台密码")
+    if password != confirm_password:
+        raise HTTPException(400, "两次输入的密码不一致")
+
+    try:
+        ok = set_admin_password(password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if not ok:
+        raise HTTPException(500, "保存后台密码失败")
+
+    return {
+        "ok": True,
+        "session_id": create_session(),
+        "message": "后台密码设置成功",
+    }
+
+
+async def login_admin(request: Request):
+    """后台登录"""
+    if not is_password_configured():
+        raise HTTPException(400, "请先初始化后台密码")
+
+    body = await request.json()
+    password = (body.get("password") or "").strip()
+
+    if not password:
+        raise HTTPException(400, "请输入后台密码")
+    if not verify_admin_password(password):
+        raise HTTPException(401, "后台密码错误")
+
+    return {
+        "ok": True,
+        "session_id": create_session(),
+        "message": "登录成功",
+    }
+
+
+async def logout_admin(request: Request):
+    """后台退出登录"""
+    invalidate_session(get_session_id(request))
+    return {"ok": True}
+
+
+async def get_v1_api_key_status():
+    """获取 V1 API Key 状态"""
+    return {
+        "ok": True,
+        **get_api_key_status(),
+    }
+
+
+async def update_v1_api_key(request: Request):
+    """设置 V1 API Key"""
+    body = await request.json()
+    api_key = (body.get("api_key") or "").strip()
+    auto_generate = bool(body.get("auto_generate"))
+
+    if auto_generate and not api_key:
+        api_key = generate_api_key()
+
+    if not api_key:
+        raise HTTPException(400, "请输入 API Key")
+
+    try:
+        ok = set_api_key(api_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if not ok:
+        raise HTTPException(500, "保存 API Key 失败")
+
+    return {
+        "ok": True,
+        "api_key": api_key,
+        "message": "V1 API Key 保存成功",
+        **get_api_key_status(),
+    }
+
+
+async def delete_v1_api_key():
+    """清除 V1 API Key"""
+    ok = clear_api_key()
+    if not ok:
+        raise HTTPException(500, "清除 API Key 失败")
+    return {
+        "ok": True,
+        "message": "V1 API Key 已清除",
+        **get_api_key_status(),
     }
 
 

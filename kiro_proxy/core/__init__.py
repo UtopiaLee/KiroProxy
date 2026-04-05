@@ -18,6 +18,17 @@ from .error_handler import (
     get_anthropic_error_response, format_error_log
 )
 from .rate_limiter import RateLimiter, RateLimitConfig, rate_limiter, get_rate_limiter
+from .api_key_auth import (
+    API_KEY_HEADER,
+    API_KEY_MIN_LENGTH,
+    clear_api_key,
+    extract_api_key,
+    generate_api_key,
+    get_api_key_status,
+    is_api_key_configured,
+    set_api_key,
+    verify_api_key,
+)
 
 __all__ = [
     "state", "ProxyState", "RequestLog", "Account", 
@@ -32,5 +43,8 @@ __all__ = [
     "is_content_length_error",
     "ErrorType", "KiroError", "classify_error", "is_account_suspended",
     "get_anthropic_error_response", "format_error_log",
-    "RateLimiter", "RateLimitConfig", "rate_limiter", "get_rate_limiter"
+    "RateLimiter", "RateLimitConfig", "rate_limiter", "get_rate_limiter",
+    "API_KEY_HEADER", "API_KEY_MIN_LENGTH", "clear_api_key", "extract_api_key",
+    "generate_api_key", "get_api_key_status", "is_api_key_configured",
+    "set_api_key", "verify_api_key",
 ]
